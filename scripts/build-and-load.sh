@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Build the local-only Box agent-mount image and load it into the sbx runtime.
+#
+# The private agent-mount binary is too big for kit files/ (4 MB injection limit),
+# so it is baked into an image built FROM the stock shell template, then loaded
+# into sbx's own image store with `sbx template load`. Nothing is pushed anywhere.
+#
+# IMPORTANT — architecture: a sandbox can only run a binary matching the sbx
+# runtime's architecture. On Apple Silicon the sbx runtime is arm64 and does NOT
+# emulate; an amd64 agent-mount will fail to exec there. Use a binary whose arch
+# matches your sbx runtime (check with: sbx run shell -- uname -m).
+set -euo pipefail
+
+IMAGE="${IMAGE:-sbx-box-agentmount:local}"
+BASE="${BASE:-docker/sandbox-templates:shell-docker}"
+BIN="${BIN:-agentmount/linux/agent-mount}"        # override for an arm64 build
+TAR="${TAR:-/tmp/${IMAGE//[:\/]/_}.tar}"
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repo_root"
+
+[ -f "$BIN" ] || { echo "ERROR: binary not found: $BIN" >&2; exit 1; }
+
+# Determine the binary's target arch -> Docker platform.
+case "$(file -b "$BIN")" in
+  *x86-64*|*amd64*)  PLATFORM="linux/amd64" ;;
+  *aarch64*|*ARM*)   PLATFORM="linux/arm64" ;;
+  *) echo "ERROR: cannot determine arch of $BIN" >&2; exit 1 ;;
+esac
+echo ">> binary $BIN -> $PLATFORM"
+
+# Warn if the binary arch won't match the sbx runtime (it must, to exec). The
+# sbx runtime arch matches the local Docker Desktop VM, i.e. the host arch.
+case "$(uname -m)" in
+  x86_64|amd64)  rt_plat="linux/amd64" ;;
+  arm64|aarch64) rt_plat="linux/arm64" ;;
+  *)             rt_plat="" ;;
+esac
+if [ -n "$rt_plat" ] && [ "$rt_plat" != "$PLATFORM" ]; then
+  echo "!! WARNING: sbx runtime is $rt_plat but the binary is $PLATFORM." >&2
+  echo "!!          agent-mount will NOT exec inside the sandbox (no emulation)." >&2
+  echo "!!          Provide a $rt_plat agent-mount build and re-run with BIN=<path>." >&2
+fi
+
+echo ">> building $IMAGE ($PLATFORM)"
+docker build --platform "$PLATFORM" --build-arg BASE="$BASE" --build-arg BIN="$BIN" -t "$IMAGE" .
+
+echo ">> saving + loading into the sbx runtime"
+docker save "$IMAGE" -o "$TAR"
+sbx template load "$TAR"
+rm -f "$TAR"
+
+echo ">> done. Loaded template:"
+sbx template ls | grep -i "${IMAGE%%:*}" || true
+cat <<EOF
+
+Next:
+  echo "<your-box-developer-or-oauth-token>" | sbx secret set -g box
+  sbx run shell --template $IMAGE --kit ./ .
+  # inside the sandbox:
+  #   agent-mount --version
+  #   agent-mount mount "/home/agent/workspace/box" "<box-folder-id>"
+  #   agent-mount status
+EOF

@@ -1,0 +1,71 @@
+schemaVersion: "2"
+kind: mixin
+name: agentmount
+displayName: Box AgentMount (two-way folder sync)
+description: "Mounts a Box folder into the sandbox and keeps it in two-way sync via Box's agent-mount client. OAuth / developer-token auth: set the token with `sbx secret set -g box`. The kit holds no credentials."
+
+# Box API surface the agent-mount client talks to. Start with the core hosts and
+# widen using `sbx policy log <sandbox>` if a request gets blocked (e.g. the Box
+# events long-poll endpoints under *.services.box.net).
+caps:
+  network:
+    allow:
+      - api.box.com          # REST API + OAuth token endpoint
+      - upload.box.com       # file uploads
+      - dl.boxcloud.com      # file downloads
+      - "*.boxcloud.com"     # download redirects (public/dl shards)
+      - "*.services.box.net" # realtime events long-poll (two-way sync)
+
+# The real Box token never enters the container. agent-mount sends the sentinel
+# value as `Authorization: Bearer proxy-managed`; the sbx proxy swaps in the real
+# token from `sbx secret set -g box` on outbound requests to the Box hosts below.
+credentials:
+  - service: box
+    description: "Box OAuth / developer access token, injected as the Bearer credential on Box API requests."
+    apiKey:
+      name: BOX_ACCESS_TOKEN
+      inject:
+        - domain: api.box.com
+          header: Authorization
+          format: "Bearer %s"
+        - domain: upload.box.com
+          header: Authorization
+          format: "Bearer %s"
+        - domain: dl.boxcloud.com
+          header: Authorization
+          format: "Bearer %s"
+
+environment:
+  variables:
+    # Sentinel: replaced by the proxy on outbound Box requests (see credentials).
+    BOX_ACCESS_TOKEN: "proxy-managed"
+
+# NOTE: the agent-mount binary (34 MB, linux/amd64) is NOT shipped in this kit's
+# files/ — kit file injection has a 4 MB message limit and the binary is x86-64
+# only (won't exec on an arm64 sandbox). It is baked into a locally-built image
+# instead (see Dockerfile). Run with:
+#   sbx run shell --template sbx-box-agentmount:local --kit ./ .
+# This mixin supplies only the Box network policy, credential injection, and the
+# agent context; it composes onto that prebuilt image.
+
+agentContext: |
+  Box AgentMount: the `agent-mount` CLI is installed on PATH and your Box access
+  token is injected by the sbx proxy as the `Authorization: Bearer` credential on
+  requests to api.box.com / upload.box.com / dl.boxcloud.com. The BOX_ACCESS_TOKEN
+  env var holds the sentinel "proxy-managed", NOT the real token.
+
+  Mount a Box folder into a local directory and keep it in two-way sync:
+
+      # <local-dir>: absolute path to sync into
+      # <box-id>:    the folder id (the number at the end of the folder URL on box.com)
+      agent-mount mount "/home/agent/workspace/box" "123456789"
+      agent-mount status
+      agent-mount unmount "/home/agent/workspace/box"
+
+  Important:
+   - Auth is pre-wired through the proxy. Do NOT run `agent-mount config` and do
+     NOT write ~/.agent-mount/box-config.json — that would override the proxy token.
+   - OAuth/developer tokens are short-lived. If sync starts failing with auth
+     errors, the host must refresh the secret: `sbx secret set -g box <new-token>`.
+   - Avoid atomic-save (temp-file + rename) edits inside the mount; they break Box
+     file version history.
