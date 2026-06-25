@@ -120,6 +120,57 @@ sbx run shell --template sbx-box-agentmount:local --kit ./ -- printenv BOX_ACCES
 
 ---
 
+## Evaluating on Windows (amd64)
+
+The bundled Linux binary is **linux/amd64 only**, so on an Apple Silicon Mac the
+`aarch64` sbx runtime can't exec it (see the Architecture section). To evaluate the
+kit end-to-end you need an **amd64** runtime — a Windows machine works, because
+Docker Desktop's VM (WSL 2 **or** Hyper-V backend) is `x86_64` on amd64 hardware.
+The Hyper-V vs WSL 2 choice does **not** change the architecture; both run the
+amd64 binary fine.
+
+You also don't need bash/WSL for this. `scripts/build-and-load.sh` is just a
+convenience wrapper — the underlying steps are three `docker`/`sbx` commands that
+run in native **PowerShell**:
+
+```console
+# from the repo root (PowerShell) — replaces build-and-load.sh, no bash needed
+docker build --platform linux/amd64 -t sbx-box-agentmount:local .
+docker save sbx-box-agentmount:local -o sbx-box.tar
+sbx template load sbx-box.tar
+
+# Box token — interactive paste (avoids PowerShell pipe encoding mangling the token)
+sbx secret set -g box
+```
+
+> Shortcut: you can also build the tar **on an Apple Silicon Mac**
+> (`docker build --platform linux/amd64 …` then `docker save`) — the build only
+> *copies* the binary, never execs it, so cross-building works. Copy `sbx-box.tar`
+> to Windows and just run `sbx template load sbx-box.tar` there.
+
+Confirm it works:
+
+```console
+sbx run shell -- uname -m
+# -> x86_64   (the reason you're on Windows)
+
+sbx run shell --template sbx-box-agentmount:local --kit ./ -- agent-mount --version
+# -> a version, NOT "exec format error"
+
+sbx run shell --template sbx-box-agentmount:local --kit ./ -- printenv BOX_ACCESS_TOKEN
+# -> proxy-managed   (sentinel, not the real token)
+```
+
+Then the functional check — mount a Box folder and confirm two-way sync:
+
+```console
+sbx run shell --template sbx-box-agentmount:local --kit ./ .
+#   agent-mount mount "/home/agent/workspace/box" "<box-folder-id>"
+#   agent-mount status
+```
+
+---
+
 ## How auth works
 
 `agent-mount` sends `Authorization: Bearer proxy-managed` to Box; the sbx proxy
