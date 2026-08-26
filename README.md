@@ -9,8 +9,7 @@ enters the container).
 > This kit is built and run **entirely locally**. Do **not** `sbx kit push`,
 > `docker push`, or publish this repo to public GitHub / Docker Hub.
 
-This is the Box analogue of [`sbx-kits-firecrawl`](https://github.com/ajeetraina/sbx-kits-firecrawl),
-following the conventions in [`docker/sbx-kits-contrib`](https://github.com/docker/sbx-kits-contrib).
+
 
 ---
 
