@@ -37,7 +37,7 @@ and the sbx runtime does **not** emulate other architectures.
 | Your host / sbx runtime | Binary you need                  | Status here |
 |-------------------------|----------------------------------|-------------|
 | `x86_64` (amd64)        | `agentmount/linux/agent-mount` ✅ | works       |
-| `aarch64` (Apple Silicon)| a **linux/arm64** `agent-mount`  | **not yet provided** |
+| `aarch64` (Apple Silicon)| a **linux/arm64** `agent-mount`  | **not yet available** |
 
 Check your runtime arch:
 
