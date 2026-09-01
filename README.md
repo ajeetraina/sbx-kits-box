@@ -5,11 +5,6 @@ client into a sandbox: mount a Box folder into the sandbox and keep it in two-wa
 sync, with the Box access token injected by the sbx proxy (the real token never
 enters the container).
 
-> ⚠️ **Private bits — do not push.** The `agent-mount` binaries are Box-confidential.
-> This kit is built and run **entirely locally**. Do **not** `sbx kit push`,
-> `docker push`, or publish this repo to public GitHub / Docker Hub.
-
-
 
 ---
 
