@@ -7,7 +7,7 @@ description: "Mounts a Box folder into the sandbox and keeps it in two-way sync 
 # Box API surface the agent-mount client talks to. Start with the core hosts and
 # widen using `sbx policy log <sandbox>` if a request gets blocked (e.g. the Box
 # events long-poll endpoints under *.services.box.net).
-caps:
+permissions:
   network:
     allow:
       - api.box.com          # REST API + OAuth token endpoint
@@ -48,24 +48,25 @@ environment:
 # This mixin supplies only the Box network policy, credential injection, and the
 # agent context; it composes onto that prebuilt image.
 
-agentContext: |
-  Box AgentMount: the `agent-mount` CLI is installed on PATH and your Box access
-  token is injected by the sbx proxy as the `Authorization: Bearer` credential on
-  requests to api.box.com / upload.box.com / dl.boxcloud.com. The BOX_ACCESS_TOKEN
-  env var holds the sentinel "proxy-managed", NOT the real token.
+agentInstructions:
+  content: |
+    Box AgentMount: the `agent-mount` CLI is installed on PATH and your Box access
+    token is injected by the sbx proxy as the `Authorization: Bearer` credential on
+    requests to api.box.com / upload.box.com / dl.boxcloud.com. The BOX_ACCESS_TOKEN
+    env var holds the sentinel "proxy-managed", NOT the real token.
 
-  Mount a Box folder into a local directory and keep it in two-way sync:
+    Mount a Box folder into a local directory and keep it in two-way sync:
 
-      # <local-dir>: absolute path to sync into
-      # <box-id>:    the folder id (the number at the end of the folder URL on box.com)
-      agent-mount mount "/home/agent/workspace/box" "123456789"
-      agent-mount status
-      agent-mount unmount "/home/agent/workspace/box"
+        # <local-dir>: absolute path to sync into
+        # <box-id>:    the folder id (the number at the end of the folder URL on box.com)
+        agent-mount mount "/home/agent/workspace/box" "123456789"
+        agent-mount status
+        agent-mount unmount "/home/agent/workspace/box"
 
-  Important:
-   - Auth is pre-wired through the proxy. Do NOT run `agent-mount config` and do
-     NOT write ~/.agent-mount/box-config.json — that would override the proxy token.
-   - OAuth/developer tokens are short-lived. If sync starts failing with auth
-     errors, the host must refresh the secret: `sbx secret set -g box <new-token>`.
-   - Avoid atomic-save (temp-file + rename) edits inside the mount; they break Box
-     file version history.
+    Important:
+     - Auth is pre-wired through the proxy. Do NOT run `agent-mount config` and do
+       NOT write ~/.agent-mount/box-config.json — that would override the proxy token.
+     - OAuth/developer tokens are short-lived. If sync starts failing with auth
+       errors, the host must refresh the secret: `sbx secret set -g box <new-token>`.
+     - Avoid atomic-save (temp-file + rename) edits inside the mount; they break Box
+       file version history.
