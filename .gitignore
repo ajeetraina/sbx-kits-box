@@ -1,0 +1,4 @@
+# Box AgentMount v0.4.0 linux/arm64 build — PRIVATE PREVIEW.
+# Obtain from Box and drop at agentmount/linux-arm64/box-mount before building on
+# Apple Silicon. Intentionally not committed (private-preview binary; see README).
+agentmount/linux-arm64/

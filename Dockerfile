@@ -18,5 +18,13 @@ FROM ${BASE}
 
 # The private Box client. Build context is the repo root. The template runs as a
 # non-root user, so set ownership/mode at copy time rather than with RUN chmod.
+#
+# v0.4.0 note: the `mount` command self-invokes a helper executable named
+# `box-mount` on PATH (the sync engine), so the binary MUST be installed under
+# that name or `mount` fails with FileNotFoundError: 'box-mount'. We also install
+# an `agent-mount` alias so the documented CLI surface keeps working. Two COPYs
+# (rather than a RUN symlink) because the template's non-root user can't write
+# /usr/local/bin at RUN time.
 ARG BIN=agentmount/linux/agent-mount
+COPY --chown=root:root --chmod=0755 ${BIN} /usr/local/bin/box-mount
 COPY --chown=root:root --chmod=0755 ${BIN} /usr/local/bin/agent-mount

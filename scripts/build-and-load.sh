@@ -13,8 +13,18 @@ set -euo pipefail
 
 IMAGE="${IMAGE:-sbx-box-agentmount:local}"
 BASE="${BASE:-docker/sandbox-templates:shell-docker}"
-BIN="${BIN:-agentmount/linux/agent-mount}"        # override for an arm64 build
 TAR="${TAR:-/tmp/${IMAGE//[:\/]/_}.tar}"
+
+# Auto-select a binary whose arch matches the sbx runtime (= host arch) unless the
+# caller pinned BIN. On Apple Silicon that's the v0.4.0 linux/arm64 box-mount; on
+# amd64 it's the linux/amd64 agent-mount. Override with BIN=<path> for other builds.
+if [ -z "${BIN:-}" ]; then
+  case "$(uname -m)" in
+    arm64|aarch64) BIN="agentmount/linux-arm64/box-mount" ;;
+    x86_64|amd64)  BIN="agentmount/linux/agent-mount" ;;
+    *)             BIN="agentmount/linux/agent-mount" ;;
+  esac
+fi
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
@@ -55,10 +65,10 @@ sbx template ls | grep -i "${IMAGE%%:*}" || true
 cat <<EOF
 
 Next:
-  echo "<your-box-developer-or-oauth-token>" | sbx secret set -g box
+  echo "<your-box-developer-or-oauth-token>" | sbx secret set box
   sbx run shell --template $IMAGE --kit ./ .
-  # inside the sandbox:
-  #   agent-mount --version
-  #   agent-mount mount "/home/agent/workspace/box" "<box-folder-id>"
-  #   agent-mount status
+  # inside the sandbox (box-mount; agent-mount is an alias):
+  #   box-mount --version
+  #   box-mount mount "/home/agent/workspace/box" "<box-folder-id>"   # root = 0
+  #   box-mount status
 EOF
