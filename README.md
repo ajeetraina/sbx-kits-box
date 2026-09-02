@@ -5,11 +5,6 @@ client into a sandbox: mount a Box folder into the sandbox and keep it in two-wa
 sync, with the Box access token injected by the sbx proxy (the real token never
 enters the container).
 
-> **Verified end-to-end** on Apple Silicon (`aarch64` sbx runtime) with the v0.4.0
-> `box-mount` build: credential injection, network policy, `mount`, and two-way
-> sync (down **and** up) all confirmed against the live Box API.
-
----
 
 ## What's in here
 
