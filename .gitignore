@@ -1,4 +1,9 @@
-# Box AgentMount v0.4.0 linux/arm64 build — PRIVATE PREVIEW.
-# Obtain from Box and drop at agentmount/linux-arm64/box-mount before building on
-# Apple Silicon. Intentionally not committed (private-preview binary; see README).
+# Box AgentMount binaries + upstream docs are PRIVATE / CONFIDENTIAL (Box preview).
+# Obtain them from Box and drop them into agentmount/<arch>/ locally before
+# building. They must NEVER be committed to this public repo.
+agentmount/linux/agent-mount
 agentmount/linux-arm64/
+agentmount/mac/agent-mount
+
+# Upstream AgentMount CLI doc, marked "Box Confidential" — keep local only.
+agentmount/README.md

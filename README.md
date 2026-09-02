@@ -18,13 +18,18 @@ sbx-kits-box/
 ├── spec.yaml                       # the kit (v2 mixin): Box network policy + token injection + agent instructions
 ├── Dockerfile                      # bakes the box-mount binary into a local image (binary is too big for files/)
 ├── scripts/build-and-load.sh       # build that image + load it into the sbx runtime (auto-selects the arch binary)
-├── agentmount/
-│   ├── README.md                   # upstream AgentMount CLI docs (Box)
-│   ├── linux/agent-mount           # linux/amd64 binary (v0.x)   -> used inside an amd64 sandbox
-│   ├── linux-arm64/box-mount       # linux/arm64 binary (v0.4.0) -> Apple Silicon sandbox (PRIVATE PREVIEW — not committed; obtain from Box)
+├── agentmount/                     # (contents below are PRIVATE — git-ignored, obtain from Box)
+│   ├── README.md                   # upstream AgentMount CLI docs (Box Confidential)
+│   ├── linux/agent-mount           # linux/amd64 binary (v0.x)   -> amd64 sandbox
+│   ├── linux-arm64/box-mount       # linux/arm64 binary (v0.4.0) -> Apple Silicon sandbox
 │   └── mac/agent-mount             # darwin/arm64 binary         -> HOST use only (not the sandbox)
 └── README.md
 ```
+
+> **The `agentmount/` binaries and docs are NOT in this repo.** They are Box
+> private-preview artifacts and are **git-ignored**. Obtain them from Box and drop
+> them into `agentmount/<arch>/` locally before building. This public repo ships
+> only the kit scaffolding (spec, Dockerfile, scripts, docs).
 
 The kit (`spec.yaml`) supplies only the **Box network allowlist**, **credential
 injection**, the **`BOX_ACCESS_TOKEN` sentinel**, and the **agent instructions**. The
@@ -260,8 +265,8 @@ setup.
 
 ## Host-side binaries (not part of the sandbox)
 
-`agentmount/mac/agent-mount` (darwin/arm64) and the Windows build are for running
-AgentMount **on your host machine**, not inside the sandbox. They are kept here for
-convenience and are **not** used by the kit. For host use, follow
-[`agentmount/README.md`](agentmount/README.md). Only the **Linux** binary belongs
-inside an sbx sandbox.
+The `agentmount/mac/agent-mount` (darwin/arm64) and Windows builds run AgentMount
+**on your host machine**, not inside the sandbox, and are **not** used by the kit.
+Like the Linux binaries they are Box private-preview artifacts — obtain them from
+Box; they are git-ignored, not shipped in this repo. Only a **Linux** binary
+belongs inside an sbx sandbox.
