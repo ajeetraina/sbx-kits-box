@@ -6,7 +6,9 @@ description: "Mounts a Box folder into the sandbox and keeps it in two-way sync 
 
 # Box API surface the agent-mount client talks to. Start with the core hosts and
 # widen using `sbx policy log <sandbox>` if a request gets blocked (e.g. the Box
-# events long-poll endpoints under *.services.box.net).
+# events long-poll endpoints under *.services.box.net). Note: sbx `*` matches a
+# single label only, so the nested realtime endpoints (e.g. 2.realtime.services.box.net)
+# need their own *.realtime.services.box.net entry.
 permissions:
   network:
     allow:
@@ -15,6 +17,7 @@ permissions:
       - dl.boxcloud.com      # file downloads
       - "*.boxcloud.com"     # download redirects (public/dl shards)
       - "*.services.box.net" # realtime events long-poll (two-way sync)
+      - "*.realtime.services.box.net" # realtime event endpoints, e.g. 2.realtime.services.box.net (Box->local sync)
       - "*.boxcdn.net"       # sync-engine min-version manifest (cdn07.boxcdn.net/AgentMount.json)
 
 # The real Box token never enters the container. agent-mount sends the sentinel
