@@ -12,17 +12,29 @@
 # built; missing ones are skipped with a warning.
 #
 # Auth: pass Docker Hub creds via env for non-interactive login, e.g.
-#   export DOCKERHUB_USERNAME=ajeetraina777
+#   export DOCKERHUB_USERNAME=<your-hub-user>
 #   export DOCKERHUB_TOKEN=<access-token>      # a Hub access token, NOT your password
 # If those are unset the script assumes you are already logged in (docker login).
 #
+# The target namespace is NOT hard-coded: pass it as the first argument or via
+# NAMESPACE=. Use whichever Docker Hub org you own (e.g. `box`).
+#
 # Usage:
-#   ./scripts/push-to-dockerhub.sh                 # push :v0.4.0 and :latest
-#   VERSION=v0.4.1 ./scripts/push-to-dockerhub.sh  # override the version tag
-#   PLATFORMS=linux/arm64 ./scripts/push-to-dockerhub.sh   # single-arch push
+#   ./scripts/push-to-dockerhub.sh box                    # push box/sbx-box-agentmount :v0.4.0 + :latest
+#   NAMESPACE=box ./scripts/push-to-dockerhub.sh          # same, via env
+#   VERSION=v0.4.1 ./scripts/push-to-dockerhub.sh box     # override the version tag
+#   PLATFORMS=linux/arm64 ./scripts/push-to-dockerhub.sh box   # single-arch push
 set -euo pipefail
 
-NAMESPACE="${NAMESPACE:-ajeetraina777}"
+# Namespace comes from $1 or NAMESPACE= (no default — this script is not tied to
+# any one Docker Hub account).
+NAMESPACE="${1:-${NAMESPACE:-}}"
+if [ -z "$NAMESPACE" ]; then
+  echo "ERROR: no Docker Hub namespace given." >&2
+  echo "       Usage: $0 <namespace>   (or NAMESPACE=<namespace> $0)" >&2
+  echo "       e.g.:  $0 box" >&2
+  exit 1
+fi
 IMAGE_NAME="${IMAGE_NAME:-sbx-box-agentmount}"
 REPO="${REPO:-${NAMESPACE}/${IMAGE_NAME}}"
 VERSION="${VERSION:-v0.4.0}"
