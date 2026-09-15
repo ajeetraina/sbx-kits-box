@@ -13,7 +13,7 @@ sbx-kits-box/
 ├── spec.yaml                       # the kit (v2 mixin): Box network policy + token injection + agent instructions
 ├── Dockerfile                      # bakes the box-mount binary into a local image (binary is too big for files/)
 ├── scripts/build-and-load.sh       # build that image + load it into the sbx runtime (auto-selects the arch binary)
-├── scripts/push-to-dockerhub.sh    # build + push a multi-arch image to Docker Hub (ajeetraina777 namespace)
+├── scripts/push-to-dockerhub.sh    # build + push a multi-arch image to a Docker Hub namespace you pass in (e.g. box)
 ├── agentmount/                     # (contents below are PRIVATE - git-ignored, obtain from Box)
 │   ├── README.md                   # upstream AgentMount CLI docs (Box Confidential)
 │   ├── linux/agent-mount           # linux/amd64 binary (v0.x)   -> amd64 sandbox
@@ -122,22 +122,24 @@ if the binary arch won't match your runtime.
 #### (Optional) Publish the image to Docker Hub
 
 To share the image instead of loading it only into your local sbx runtime, push a
-**multi-arch** image to Docker Hub (`ajeetraina777/sbx-box-agentmount`). Because
-both Linux binaries live under `agentmount/`, the script bakes the right one per
-platform (arm64 → `linux-arm64/box-mount`, amd64 → `linux/agent-mount`) and stitches
-them into a single `:v0.4.0` + `:latest` manifest, so consumers pull the binary
-matching their runtime automatically.
+**multi-arch** image to Docker Hub. Pass the namespace you own as the first
+argument (e.g. `box`) — the script has no hard-coded default. It publishes to
+`<namespace>/sbx-box-agentmount`. Because both Linux binaries live under
+`agentmount/`, the script bakes the right one per platform (arm64 →
+`linux-arm64/box-mount`, amd64 → `linux/agent-mount`) and stitches them into a
+single `:v0.4.0` + `:latest` manifest, so consumers pull the binary matching their
+runtime automatically.
 
 ```console
-export DOCKERHUB_USERNAME=ajeetraina777
+export DOCKERHUB_USERNAME=<your-hub-user>
 export DOCKERHUB_TOKEN=<your-docker-hub-access-token>   # a Hub access token, NOT your password
-./scripts/push-to-dockerhub.sh
+./scripts/push-to-dockerhub.sh box                     # -> box/sbx-box-agentmount
 ```
 
-Overrides: `VERSION=v0.4.1 …` to change the tag, `PLATFORMS=linux/arm64 …` for a
-single-arch push. If `DOCKERHUB_TOKEN` is unset the script assumes an existing
-`docker login` session. Requires `docker buildx` (it creates a `sbx-box-builder`
-builder if needed).
+Overrides: `NAMESPACE=box …` instead of the positional arg, `VERSION=v0.4.1 …` to
+change the tag, `PLATFORMS=linux/arm64 …` for a single-arch push. If
+`DOCKERHUB_TOKEN` is unset the script assumes an existing `docker login` session.
+Requires `docker buildx` (it creates a `sbx-box-builder` builder if needed).
 
 > ⚠️ **The `agentmount/` binaries are Box-confidential.** Only push to a Docker Hub
 > repo you intend to be **private** (or one you are cleared to publish). A public
