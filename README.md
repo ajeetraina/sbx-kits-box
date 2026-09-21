@@ -243,32 +243,33 @@ sbx secret set box
 
 With `sbx --cloud` the sandbox runs **server-side in Docker's cloud** (Linux microVMs),
 not on your machine. This is the ideal setup when you develop on a Mac but want Box
-Mount and the sandbox running in Linux in the cloud: your Mac only drives the CLI, and
-the multi-arch image from this kit means the **amd64** cloud runtime gets the amd64
-`box-mount` automatically (your local arm64 runs get the arm64 one — same image).
+Mount and the sandbox running in Linux in the cloud: your Mac only drives the CLI.
+Docker Cloud runs **amd64**, and this kit builds an amd64 image from the same source as
+your local arm64 build — so you develop on Apple Silicon and run amd64 in the cloud
+without a separate cross-build.
 
 Two differences from local runs: a custom template must be **uploaded to the cloud
-registry first** (`--template` never auto-uploads), and the Box token lives in your
-**cloud account**.
+registry first** (`--template` never auto-uploads, and it must be a **docker-save** tar,
+not a buildx OCI tar), and the Box token lives in your **cloud account**.
 
 ```console
 # 0. Sign in (a Docker account with Cloud Sandboxes access)
 sbx login
 
-# 1. Build a multi-arch OCI tar (same build as build-and-load.sh, but keep the tar).
-#    Docker Cloud runs amd64, so amd64-only is a smaller, faster upload if you prefer:
-#    docker buildx build --platform linux/amd64 --provenance=false -t sbx-box:local --output type=oci,dest=/tmp/sbx-box.tar .
-docker buildx build --platform linux/amd64,linux/arm64 --provenance=false \
-  -t sbx-box:local --output type=oci,dest=/tmp/sbx-box.tar .
+# 1. Build an amd64 image and export a DOCKER-SAVE tar. Docker Cloud runs amd64, and
+#    `sbx template load --cloud` needs docker-save format (manifest.json) — a buildx
+#    OCI tar (index.json) is rejected with "file manifest.json not found in tar".
+docker build --platform linux/amd64 -t sbx-box:cloud .
+docker save sbx-box:cloud -o /tmp/sbx-box.tar
 
-# 2. Upload it as a cloud-managed template (multi-GB; takes a few minutes)
+# 2. Upload it as a cloud-managed template (~600 MB; takes a few minutes)
 sbx template load /tmp/sbx-box.tar sbx-box --cloud --cpus 2 --memory-mib 4096
 
 # 3. Store the Box token in your cloud account (the proxy injects it server-side)
 sbx --cloud secret set box          # paste the Box developer / OAuth access token
 
 # 4. Run the sandbox in the cloud with this kit (amd64 Linux)
-sbx --cloud run shell --template sbx-box --kit ./ --platform linux/amd64
+sbx --cloud run shell --template sbx-box --kit ./
 
 # 5. Use Box Mount inside the cloud sandbox
 sbx --cloud ls                                                    # find the sandbox name
@@ -285,8 +286,10 @@ Notes:
   2:1 / 1:1 / 1:2 memory-to-CPU ratio; `--cpus 2 --memory-mib 4096` is a safe default.
   A cloud `run` without overrides defaults to 2 CPUs / 4 GiB (well above the 1 GiB a
   constrained local run can fall back to).
-- **Platform.** `--platform linux/amd64` pins the arch; omit it to inherit the
-  template's. Keep it explicit for a multi-arch template so you know which variant runs.
+- **Tar format.** `sbx template load --cloud` parses **docker-save** archives
+  (`manifest.json`). A buildx OCI export (`--output type=oci`, `index.json`) is
+  rejected — use `docker build` + `docker save` as above. The amd64 template is
+  single-platform, so no `--platform` flag is needed at run time.
 - **Network egress.** The kit's Box allowlist (`spec.yaml`) travels with `--kit`. If a
   Box host is still blocked in the cloud, find it with `sbx --cloud policy log
   <sandbox>` and allow it (`--allow-network` at create time, or a policy allow).
