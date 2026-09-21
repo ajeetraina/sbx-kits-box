@@ -239,6 +239,70 @@ sbx secret set box
 
 ---
 
+## Running in Docker Cloud (`sbx --cloud`)
+
+With `sbx --cloud` the sandbox runs **server-side in Docker's cloud** (Linux microVMs),
+not on your machine. This is the ideal setup when you develop on a Mac but want Box
+Mount and the sandbox running in Linux in the cloud: your Mac only drives the CLI, and
+the multi-arch image from this kit means the **amd64** cloud runtime gets the amd64
+`box-mount` automatically (your local arm64 runs get the arm64 one — same image).
+
+Two differences from local runs: a custom template must be **uploaded to the cloud
+registry first** (`--template` never auto-uploads), and the Box token lives in your
+**cloud account**.
+
+```console
+# 0. Sign in (a Docker account with Cloud Sandboxes access)
+sbx login
+
+# 1. Build a multi-arch OCI tar (same build as build-and-load.sh, but keep the tar).
+#    Docker Cloud runs amd64, so amd64-only is a smaller, faster upload if you prefer:
+#    docker buildx build --platform linux/amd64 --provenance=false -t sbx-box:local --output type=oci,dest=/tmp/sbx-box.tar .
+docker buildx build --platform linux/amd64,linux/arm64 --provenance=false \
+  -t sbx-box:local --output type=oci,dest=/tmp/sbx-box.tar .
+
+# 2. Upload it as a cloud-managed template (multi-GB; takes a few minutes)
+sbx template load /tmp/sbx-box.tar sbx-box --cloud --cpus 2 --memory-mib 4096
+
+# 3. Store the Box token in your cloud account (the proxy injects it server-side)
+sbx --cloud secret set box          # paste the Box developer / OAuth access token
+
+# 4. Run the sandbox in the cloud with this kit (amd64 Linux)
+sbx --cloud run shell --template sbx-box --kit ./ --platform linux/amd64
+
+# 5. Use Box Mount inside the cloud sandbox
+sbx --cloud ls                                                    # find the sandbox name
+sbx --cloud exec <sandbox> -- box-mount --version
+sbx --cloud exec <sandbox> -- box-mount mount /home/agent/workspace/box <box-folder-id>
+```
+
+> ⚠️ **Confidential upload.** The tar carries the private `box-mount` binary. It goes
+> to **your own** Docker Cloud account's template registry - treat it as private and
+> don't share the template with accounts you aren't cleared for.
+
+Notes:
+- **Resources.** `--cpus` is one of 1/2/4/8/16 and `--memory-mib` is 512–32768 at a
+  2:1 / 1:1 / 1:2 memory-to-CPU ratio; `--cpus 2 --memory-mib 4096` is a safe default.
+  A cloud `run` without overrides defaults to 2 CPUs / 4 GiB (well above the 1 GiB a
+  constrained local run can fall back to).
+- **Platform.** `--platform linux/amd64` pins the arch; omit it to inherit the
+  template's. Keep it explicit for a multi-arch template so you know which variant runs.
+- **Network egress.** The kit's Box allowlist (`spec.yaml`) travels with `--kit`. If a
+  Box host is still blocked in the cloud, find it with `sbx --cloud policy log
+  <sandbox>` and allow it (`--allow-network` at create time, or a policy allow).
+- **Workspace.** Cloud sandboxes don't bind-mount your Mac's local folders like local
+  mode does - Box Mount syncs Box content straight into the sandbox, so you usually
+  don't need a local workspace there. To bring in a git repo add `--clone`; to copy
+  files use `sbx cp`.
+- **Lifecycle.** `--ttl 2h` sets a time-to-live, `sbx attach <sandbox>` reconnects, and
+  `sbx move` shuttles a sandbox between local and cloud.
+
+> The `--cloud` surface is evolving and some flags are experimental. If flags differ on
+> your `sbx` version, check `sbx --cloud <verb> --help` and the official docs:
+> https://docs.docker.com/ai/sandboxes/
+
+---
+
 ## How auth works
 
 `box-mount` sends `Authorization: Bearer proxy-managed` to Box; the sbx proxy
