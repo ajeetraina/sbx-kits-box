@@ -11,14 +11,14 @@ enters the container).
 ```
 sbx-kits-box/
 ├── spec.yaml                       # the kit (v2 mixin): Box network policy + token injection + agent instructions
-├── Dockerfile                      # bakes the box-mount binary into a local image (binary is too big for files/)
-├── scripts/build-and-load.sh       # build that image + load it into the sbx runtime (auto-selects the arch binary)
+├── Dockerfile                      # bakes box-mount into an image, arch-agnostic via TARGETARCH (too big for files/)
+├── scripts/build-and-load.sh       # build a multi-arch image (both arches you staged) + load it into the sbx runtime
 ├── scripts/push-to-dockerhub.sh    # build + push a multi-arch image to a Docker Hub namespace you pass in (e.g. box)
-├── box-mount/                     # (contents below are PRIVATE - git-ignored, obtain from Box)
+├── box-mount/                       # (contents below are PRIVATE - git-ignored, obtain from Box)
 │   ├── README.md                   # upstream Box Mount CLI docs (Box Confidential)
-│   ├── linux/box-mount           # linux/amd64 binary (v0.x)   -> amd64 sandbox
-│   ├── linux-arm64/box-mount       # linux/arm64 binary (v0.4.0) -> Apple Silicon sandbox
-│   └── mac/box-mount             # darwin/arm64 binary         -> HOST use only (not the sandbox)
+│   ├── linux/amd64/box-mount       # linux/amd64 binary  -> amd64 sandbox (Intel / Windows)
+│   ├── linux/arm64/box-mount       # linux/arm64 binary  -> arm64 sandbox (Apple Silicon)
+│   └── mac/box-mount               # darwin/arm64 binary -> HOST use only (not the sandbox)
 └── README.md
 ```
 
@@ -37,31 +37,31 @@ binary itself is delivered via a locally-built image (see below), because kit
 > engine). The Dockerfile installs the binary as **both** `box-mount` (required) and
 > `agent-mount` (back-compat alias), so either command works inside the sandbox.
 
-> **Private preview.** The `linux-arm64/box-mount` binary is a Box private-preview
-> artifact and is **git-ignored** - it is not committed here. Obtain it from Box and
-> drop it at `box-mount/linux-arm64/box-mount` before building on Apple Silicon.
+> **Private preview.** The `box-mount` binaries are Box private-preview artifacts and
+> are **git-ignored** - not committed here. Obtain them from Box and stage them at
+> `box-mount/linux/amd64/box-mount` and/or `box-mount/linux/arm64/box-mount` before
+> building. Box ships both amd64 and arm64 Linux builds.
 
 ---
 
-## ⚠️ Architecture requirement (read first)
+## Architecture (works for both amd64 and arm64)
 
-A sandbox can only run a binary that **matches the sbx runtime's architecture**,
-and the sbx runtime does **not** emulate other architectures.
+A sandbox can only run an image that **matches the sbx runtime's architecture** — the
+runtime does **not** emulate. This kit builds for **both** arches so the same tooling
+works on Apple Silicon and Intel/amd64 alike:
 
-| Your host / sbx runtime  | Binary you need                        | Status |
-|--------------------------|----------------------------------------|--------|
-| `x86_64` (amd64)         | `box-mount/linux/box-mount`         | works  |
-| `aarch64` (Apple Silicon)| `box-mount/linux-arm64/box-mount` (v0.4.0) | ✅ works - verified end-to-end |
+| Your host / sbx runtime  | Binary you stage                | Status |
+|--------------------------|---------------------------------|--------|
+| `x86_64` (amd64)         | `box-mount/linux/amd64/box-mount` | ✅ works |
+| `aarch64` (Apple Silicon)| `box-mount/linux/arm64/box-mount` | ✅ works |
 
-Check your runtime arch:
+`build-and-load.sh` builds **every arch you have staged** into one multi-arch image
+via `docker buildx` (the `TARGETARCH`-aware Dockerfile bakes the right binary into
+each). The loaded template — and the saved OCI tar — run on **both** arches, so you
+can build once and reuse the artifact anywhere. Stage only your own arch and you get
+a single-arch image for this host; that still works, it just won't run elsewhere.
 
-```console
-sbx exec <any-sandbox> -- uname -m        # x86_64  or  aarch64
-```
-
-`build-and-load.sh` auto-selects the binary matching your host arch (arm64 → the
-v0.4.0 `linux-arm64/box-mount`, amd64 → `linux/box-mount`). Override with `BIN=…`
-if you have a different build.
+Check a runtime's arch: `sbx exec <any-sandbox> -- uname -m`  (`x86_64` or `aarch64`).
 
 ---
 
@@ -72,36 +72,37 @@ if you have a different build.
 This public repo ships **scaffolding only** - the Box binaries are private-preview
 artifacts and are **not** committed (they are git-ignored). A fresh clone therefore
 has no `box-mount/` directory, and `build-and-load.sh` will fail with
-`ERROR: binary not found: box-mount/linux-arm64/box-mount` until you drop the
-binary in.
+`ERROR: no box-mount binary staged` until you stage at least your host's arch.
 
-Get the build from Box (e.g. the `box-mount-0.4.0-linux-<arch>.tar.gz` archives),
-then recreate the layout the build expects **from the repo root**:
+Get the build from Box (the `box-mount-0.4.0-linux-<arch>.tar.gz` archives), then
+stage the binaries under the arch-keyed layout **from the repo root**. Stage **both**
+to build a multi-arch image; stage just your own arch for a single-arch build:
 
 ```console
-# Apple Silicon (aarch64 sbx runtime) - REQUIRED to build here
-mkdir -p box-mount/linux-arm64
-tar xzf /path/to/box-mount-0.4.0-linux-aarch64.tar.gz -C box-mount/linux-arm64
-chmod +x box-mount/linux-arm64/box-mount
-file box-mount/linux-arm64/box-mount     # sanity: should say  ELF ... ARM aarch64
+# arm64 (Apple Silicon)
+mkdir -p box-mount/linux/arm64
+tar xzf /path/to/box-mount-0.4.0-linux-aarch64.tar.gz -C box-mount/linux/arm64
+chmod +x box-mount/linux/arm64/box-mount
+file box-mount/linux/arm64/box-mount     # sanity: should say  ELF ... ARM aarch64
 
-# amd64 runtime (Windows / Intel) - only if building for x86_64
-mkdir -p box-mount/linux
-tar xzf /path/to/box-mount-0.4.0-linux-x86_64.tar.gz -C /tmp
-mv /tmp/box-mount box-mount/linux/box-mount
+# amd64 (Intel / Windows)
+mkdir -p box-mount/linux/amd64
+tar xzf /path/to/box-mount-0.4.0-linux-x86_64.tar.gz -C box-mount/linux/amd64
+chmod +x box-mount/linux/amd64/box-mount
+file box-mount/linux/amd64/box-mount     # sanity: should say  ELF ... x86-64
 ```
 
 Target layout (all paths are git-ignored, so nothing here gets committed):
 
 ```
 box-mount/
-├── linux-arm64/box-mount    # arm64 sbx runtime (Apple Silicon)
-├── linux/box-mount        # amd64 sbx runtime (Windows / Intel)
-└── mac/box-mount          # host-side use only (not the sandbox)
+├── linux/amd64/box-mount    # amd64 sbx runtime (Intel / Windows)
+├── linux/arm64/box-mount    # arm64 sbx runtime (Apple Silicon)
+└── mac/box-mount            # host-side use only (not the sandbox)
 ```
 
-`build-and-load.sh` auto-selects the binary matching your host arch, so on Apple
-Silicon only `box-mount/linux-arm64/box-mount` is required.
+The arch directory names are the Docker `TARGETARCH` values (`amd64`, `arm64`), which
+is how the Dockerfile picks the right binary per platform.
 
 ### 2. Build the image and load it into the sbx runtime
 
@@ -109,10 +110,10 @@ Silicon only `box-mount/linux-arm64/box-mount` is required.
 ./scripts/build-and-load.sh
 ```
 
-This builds `sbx-box:local` (FROM the stock shell template, with the
-`box-mount` binary baked in under both `box-mount` and `agent-mount`) and loads it
-into sbx's image store via `sbx template load`. Nothing is pushed. The script warns
-if the binary arch won't match your runtime.
+This builds `sbx-box:local` (FROM the stock shell template, with `box-mount` baked in
+under both `box-mount` and `agent-mount`) for **every arch you staged**, and loads the
+multi-arch result into sbx's image store via `sbx template load`. Nothing is pushed.
+Uses `docker buildx`; the script warns if your host's arch isn't among those staged.
 
 > **Docker must be running** before this step. If the daemon is down the build
 > fails silently, the image is never loaded, and `sbx run --template …` later fails
@@ -124,11 +125,10 @@ if the binary arch won't match your runtime.
 To share the image instead of loading it only into your local sbx runtime, push a
 **multi-arch** image to Docker Hub. Pass the namespace you own as the first
 argument (e.g. `box`) — the script has no hard-coded default. It publishes to
-`<namespace>/sbx-box`. Because both Linux binaries live under
-`box-mount/`, the script bakes the right one per platform (arm64 →
-`linux-arm64/box-mount`, amd64 → `linux/box-mount`) and stitches them into a
-single `:v0.4.0` + `:latest` manifest, so consumers pull the binary matching their
-runtime automatically.
+`<namespace>/sbx-box`. One `docker buildx` build covers every staged arch (the
+`TARGETARCH` Dockerfile bakes the right binary per platform) and pushes a single
+`:v0.4.0` + `:latest` multi-arch manifest, so consumers pull the binary matching
+their runtime automatically.
 
 ```console
 export DOCKERHUB_USERNAME=<your-hub-user>
@@ -212,15 +212,16 @@ echo hi > /home/agent/workspace/box/e2e.txt        # then check box.com / the Bo
 
 ## Evaluating on Windows (amd64)
 
-The `linux/box-mount` binary is **linux/amd64**. On an amd64 sbx runtime
-(a Windows machine - Docker Desktop's VM is `x86_64` on amd64 hardware, WSL 2 **or**
-Hyper-V backend) it execs fine. You don't need bash/WSL - the underlying steps are
-three `docker`/`sbx` commands that run in native **PowerShell**:
+The `box-mount/linux/amd64/box-mount` binary is **linux/amd64**. On an amd64 sbx
+runtime (a Windows machine - Docker Desktop's VM is `x86_64` on amd64 hardware, WSL 2
+**or** Hyper-V backend) it execs fine. You don't need bash/WSL - the underlying steps
+are three `docker`/`sbx` commands that run in native **PowerShell** (`--platform` sets
+`TARGETARCH`, so the Dockerfile picks the amd64 binary automatically - no `BIN` arg):
 
 ```console
 # from the repo root (PowerShell) - replaces build-and-load.sh, no bash needed
 docker version                  # FIRST: confirm the Docker daemon is running (Server section present)
-docker build --platform linux/amd64 --build-arg BIN=box-mount/linux/box-mount -t sbx-box:local .
+docker build --platform linux/amd64 -t sbx-box:local .
 docker save sbx-box:local -o sbx-box.tar
 sbx template load sbx-box.tar
 
@@ -301,6 +302,24 @@ setup.
 
 - **`box-mount: not found` / exec format error** - architecture mismatch; see the
   Architecture section above. Confirm with `sbx exec <sandbox> -- uname -m`.
+
+- **`failed to create sandbox: failed to run sandbox container`** - the loaded image
+  has no variant for this host's arch (e.g. an arm64-only image on an amd64 host). The
+  sbx runtime does **not** emulate. Confirm the mismatch:
+  ```console
+  uname -m                                                        # host arch, e.g. x86_64
+  docker image inspect sbx-box:local --format '{{.Architecture}}' # image arch
+  ```
+  Fix: stage the host's arch and rebuild. `build-and-load.sh` builds a multi-arch
+  image from every arch you staged, so staging **both** produces one image that runs
+  on either host:
+  ```console
+  mkdir -p box-mount/linux/amd64
+  # stage the amd64 box-mount at box-mount/linux/amd64/box-mount (obtain from Box)
+  file box-mount/linux/amd64/box-mount       # sanity: should say  ELF ... x86-64
+  ./scripts/build-and-load.sh                # builds every staged arch into one image
+  sbx run shell --name box --template sbx-box:local --kit ./ .
+  ```
 
 - **`401 Unauthorized` from Box** - the token is invalid/expired. Developer tokens
   last ~60 min and cannot be refreshed under this kit (there's no refresh token, and

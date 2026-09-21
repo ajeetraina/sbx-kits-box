@@ -1,9 +1,5 @@
 # Box Mount binaries + upstream docs are PRIVATE / CONFIDENTIAL (Box preview).
-# Obtain them from Box and drop them into box-mount/<arch>/ locally before
-# building. They must NEVER be committed to this public repo.
-box-mount/linux/box-mount
-box-mount/linux-arm64/
-box-mount/mac/box-mount
-
-# Upstream Box Mount CLI doc, marked "Box Confidential" — keep local only.
-box-mount/README.md
+# Obtain them from Box and stage them under box-mount/ locally before building
+# (box-mount/linux/amd64/box-mount, box-mount/linux/arm64/box-mount). They must
+# NEVER be committed to this public repo, so the whole directory is ignored.
+box-mount/

@@ -5,58 +5,71 @@
 # so it is baked into an image built FROM the stock shell template, then loaded
 # into sbx's own image store with `sbx template load`. Nothing is pushed anywhere.
 #
-# IMPORTANT — architecture: a sandbox can only run a binary matching the sbx
-# runtime's architecture. On Apple Silicon the sbx runtime is arm64 and does NOT
-# emulate; an amd64 box-mount will fail to exec there. Use a binary whose arch
-# matches your sbx runtime (check with: sbx run shell -- uname -m).
+# ARCHITECTURE — works for both amd64 and arm64. The sbx runtime does NOT emulate,
+# so the image arch must match the host it runs on. This script builds EVERY arch
+# whose binary you have staged (see below) into ONE multi-arch image, so the loaded
+# template — and the saved tar — run on both Apple Silicon (arm64) and Intel/amd64.
+# Build once, and the same artifact works everywhere it is loaded.
+#
+# Stage the private binaries first (git-ignored, obtain from Box):
+#   box-mount/linux/amd64/box-mount   (linux/amd64)
+#   box-mount/linux/arm64/box-mount   (linux/arm64)
+# Staging only one arch is fine — the image is then single-arch for that host.
 set -euo pipefail
 
 IMAGE="${IMAGE:-sbx-box:local}"
 BASE="${BASE:-docker/sandbox-templates:shell-docker}"
 TAR="${TAR:-/tmp/${IMAGE//[:\/]/_}.tar}"
-
-# Auto-select a binary whose arch matches the sbx runtime (= host arch) unless the
-# caller pinned BIN. On Apple Silicon that's the v0.4.0 linux/arm64 box-mount; on
-# amd64 it's the linux/amd64 box-mount. Override with BIN=<path> for other builds.
-if [ -z "${BIN:-}" ]; then
-  case "$(uname -m)" in
-    arm64|aarch64) BIN="box-mount/linux-arm64/box-mount" ;;
-    x86_64|amd64)  BIN="box-mount/linux/box-mount" ;;
-    *)             BIN="box-mount/linux/box-mount" ;;
-  esac
-fi
+BUILDER="${BUILDER:-sbx-box-builder}"
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
-[ -f "$BIN" ] || { echo "ERROR: binary not found: $BIN" >&2; exit 1; }
-
-# Determine the binary's target arch -> Docker platform.
-case "$(file -b "$BIN")" in
-  *x86-64*|*amd64*)  PLATFORM="linux/amd64" ;;
-  *aarch64*|*ARM*)   PLATFORM="linux/arm64" ;;
-  *) echo "ERROR: cannot determine arch of $BIN" >&2; exit 1 ;;
-esac
-echo ">> binary $BIN -> $PLATFORM"
-
-# Warn if the binary arch won't match the sbx runtime (it must, to exec). The
-# sbx runtime arch matches the local Docker Desktop VM, i.e. the host arch.
-case "$(uname -m)" in
-  x86_64|amd64)  rt_plat="linux/amd64" ;;
-  arm64|aarch64) rt_plat="linux/arm64" ;;
-  *)             rt_plat="" ;;
-esac
-if [ -n "$rt_plat" ] && [ "$rt_plat" != "$PLATFORM" ]; then
-  echo "!! WARNING: sbx runtime is $rt_plat but the binary is $PLATFORM." >&2
-  echo "!!          box-mount will NOT exec inside the sandbox (no emulation)." >&2
-  echo "!!          Provide a $rt_plat box-mount build and re-run with BIN=<path>." >&2
+# Detect which arches have a staged binary. TARGETARCH values: amd64 | arm64.
+platforms=()
+[ -f box-mount/linux/amd64/box-mount ] && platforms+=("linux/amd64")
+[ -f box-mount/linux/arm64/box-mount ] && platforms+=("linux/arm64")
+if [ "${#platforms[@]}" -eq 0 ]; then
+  echo "ERROR: no box-mount binary staged." >&2
+  echo "       Obtain the Box binaries and stage them (git-ignored) at:" >&2
+  echo "         box-mount/linux/amd64/box-mount   (linux/amd64)" >&2
+  echo "         box-mount/linux/arm64/box-mount   (linux/arm64)" >&2
+  exit 1
 fi
 
-echo ">> building $IMAGE ($PLATFORM)"
-docker build --platform "$PLATFORM" --build-arg BASE="$BASE" --build-arg BIN="$BIN" -t "$IMAGE" .
+# Warn if THIS host's arch isn't among them — the image won't run here (no emulation).
+case "$(uname -m)" in
+  x86_64|amd64)  host_plat="linux/amd64" ;;
+  arm64|aarch64) host_plat="linux/arm64" ;;
+  *)             host_plat="" ;;
+esac
+if [ -n "$host_plat" ] && [[ " ${platforms[*]} " != *" $host_plat "* ]]; then
+  echo "!! WARNING: no $host_plat binary staged; the image won't run on THIS host." >&2
+  echo "!!          Stage box-mount/${host_plat}/box-mount to run it here." >&2
+fi
 
-echo ">> saving + loading into the sbx runtime"
-docker save "$IMAGE" -o "$TAR"
+plat_csv="$(IFS=,; echo "${platforms[*]}")"
+echo ">> building $IMAGE for: $plat_csv"
+
+# buildx drives the multi-arch build; TARGETARCH in the Dockerfile picks the binary.
+docker buildx version >/dev/null 2>&1 || {
+  echo "ERROR: 'docker buildx' is required (bundled with modern Docker)." >&2; exit 1;
+}
+# A container-driver builder can emit a multi-platform image; create one if needed.
+if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
+  echo ">> creating buildx builder '$BUILDER'"
+  docker buildx create --name "$BUILDER" --driver docker-container >/dev/null
+fi
+
+# Export an OCI archive (carries all built arches) and load it straight into sbx.
+docker buildx --builder "$BUILDER" build \
+  --platform "$plat_csv" \
+  --provenance=false \
+  --build-arg BASE="$BASE" \
+  -t "$IMAGE" \
+  --output "type=oci,dest=$TAR" .
+
+echo ">> loading into the sbx runtime"
 sbx template load "$TAR"
 rm -f "$TAR"
 
