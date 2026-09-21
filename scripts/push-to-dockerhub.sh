@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Build the Box agent-mount image and push it to Docker Hub.
+# Build the Box Mount image and push it to Docker Hub.
 #
 # Unlike scripts/build-and-load.sh (which loads a single-arch image into the local
 # sbx runtime and pushes nothing), this script publishes a MULTI-ARCH image to
 # Docker Hub so users on either Apple Silicon (arm64) or Intel/amd64 pull the
 # binary that matches their sbx runtime automatically.
 #
-# The private agent-mount binaries live under agentmount/<arch>/ and are baked in
-# per platform (arm64 -> agentmount/linux-arm64/box-mount, amd64 ->
-# agentmount/linux/agent-mount). Only the platforms whose binary is present get
+# The private box-mount binaries live under box-mount/<arch>/ and are baked in
+# per platform (arm64 -> box-mount/linux-arm64/box-mount, amd64 ->
+# box-mount/linux/box-mount). Only the platforms whose binary is present get
 # built; missing ones are skipped with a warning.
 #
 # Auth: pass Docker Hub creds via env for non-interactive login, e.g.
@@ -20,7 +20,7 @@
 # NAMESPACE=. Use whichever Docker Hub org you own (e.g. `box`).
 #
 # Usage:
-#   ./scripts/push-to-dockerhub.sh box                    # push box/sbx-box-agentmount :v0.4.0 + :latest
+#   ./scripts/push-to-dockerhub.sh box                    # push box/sbx-box :v0.4.0 + :latest
 #   NAMESPACE=box ./scripts/push-to-dockerhub.sh          # same, via env
 #   VERSION=v0.4.1 ./scripts/push-to-dockerhub.sh box     # override the version tag
 #   PLATFORMS=linux/arm64 ./scripts/push-to-dockerhub.sh box   # single-arch push
@@ -35,7 +35,7 @@ if [ -z "$NAMESPACE" ]; then
   echo "       e.g.:  $0 box" >&2
   exit 1
 fi
-IMAGE_NAME="${IMAGE_NAME:-sbx-box-agentmount}"
+IMAGE_NAME="${IMAGE_NAME:-sbx-box}"
 REPO="${REPO:-${NAMESPACE}/${IMAGE_NAME}}"
 VERSION="${VERSION:-v0.4.0}"
 BASE="${BASE:-docker/sandbox-templates:shell-docker}"
@@ -49,8 +49,8 @@ cd "$repo_root"
 # Map a docker platform -> the private binary that must be baked in for it.
 bin_for_platform() {
   case "$1" in
-    linux/arm64) echo "agentmount/linux-arm64/box-mount" ;;
-    linux/amd64) echo "agentmount/linux/agent-mount" ;;
+    linux/arm64) echo "box-mount/linux-arm64/box-mount" ;;
+    linux/amd64) echo "box-mount/linux/box-mount" ;;
     *) echo "" ;;
   esac
 }
