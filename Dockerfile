@@ -1,17 +1,17 @@
-# Local-only image carrying the private Box agent-mount client.
+# Local-only image carrying the private Box Mount client.
 #
-# The agent-mount binary (~34 MB) can't ship in the kit's files/ (4 MB injection
+# The box-mount binary (~34 MB) can't ship in the kit's files/ (4 MB injection
 # limit), so it is baked into an image built FROM the stock shell sandbox
 # template. The binary's architecture MUST match the sbx runtime (arm64 on Apple
 # Silicon); a mismatched binary will not exec inside the sandbox.
 #
 # Build + load via: ./scripts/build-and-load.sh
 # Or manually:
-#   docker build --platform linux/amd64 -t sbx-box-agentmount:local .
-#   docker save sbx-box-agentmount:local -o /tmp/img.tar && sbx template load /tmp/img.tar
+#   docker build --platform linux/amd64 -t sbx-box:local .
+#   docker save sbx-box:local -o /tmp/img.tar && sbx template load /tmp/img.tar
 #
 # Then run the sandbox with this image + the mixin kit:
-#   sbx run shell --template sbx-box-agentmount:local --kit ./ .
+#   sbx run shell --template sbx-box:local --kit ./ .
 
 ARG BASE=docker/sandbox-templates:shell-docker
 FROM ${BASE}
@@ -25,6 +25,6 @@ FROM ${BASE}
 # an `agent-mount` alias so the documented CLI surface keeps working. Two COPYs
 # (rather than a RUN symlink) because the template's non-root user can't write
 # /usr/local/bin at RUN time.
-ARG BIN=agentmount/linux/agent-mount
+ARG BIN=box-mount/linux/box-mount
 COPY --chown=root:root --chmod=0755 ${BIN} /usr/local/bin/box-mount
 COPY --chown=root:root --chmod=0755 ${BIN} /usr/local/bin/agent-mount

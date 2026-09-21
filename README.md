@@ -1,6 +1,6 @@
-# sbx-kits-box - Box AgentMount kit (private / local-only)
+# sbx-kits-box - Box Mount kit (private / local-only)
 
-An [sbx](https://docs.docker.com/ai/sandboxes/) kit that brings Box's **AgentMount**
+An [sbx](https://docs.docker.com/ai/sandboxes/) kit that brings Box's **Box Mount**
 client into a sandbox: mount a Box folder into the sandbox and keep it in two-way
 sync, with the Box access token injected by the sbx proxy (the real token never
 enters the container).
@@ -14,17 +14,17 @@ sbx-kits-box/
 ├── Dockerfile                      # bakes the box-mount binary into a local image (binary is too big for files/)
 ├── scripts/build-and-load.sh       # build that image + load it into the sbx runtime (auto-selects the arch binary)
 ├── scripts/push-to-dockerhub.sh    # build + push a multi-arch image to a Docker Hub namespace you pass in (e.g. box)
-├── agentmount/                     # (contents below are PRIVATE - git-ignored, obtain from Box)
-│   ├── README.md                   # upstream AgentMount CLI docs (Box Confidential)
-│   ├── linux/agent-mount           # linux/amd64 binary (v0.x)   -> amd64 sandbox
+├── box-mount/                     # (contents below are PRIVATE - git-ignored, obtain from Box)
+│   ├── README.md                   # upstream Box Mount CLI docs (Box Confidential)
+│   ├── linux/box-mount           # linux/amd64 binary (v0.x)   -> amd64 sandbox
 │   ├── linux-arm64/box-mount       # linux/arm64 binary (v0.4.0) -> Apple Silicon sandbox
-│   └── mac/agent-mount             # darwin/arm64 binary         -> HOST use only (not the sandbox)
+│   └── mac/box-mount             # darwin/arm64 binary         -> HOST use only (not the sandbox)
 └── README.md
 ```
 
-> **The `agentmount/` binaries and docs are NOT in this repo.** They are Box
+> **The `box-mount/` binaries and docs are NOT in this repo.** They are Box
 > private-preview artifacts and are **git-ignored**. Obtain them from Box and drop
-> them into `agentmount/<arch>/` locally before building. This public repo ships
+> them into `box-mount/<arch>/` locally before building. This public repo ships
 > only the kit scaffolding (spec, Dockerfile, scripts, docs).
 
 The kit (`spec.yaml`) supplies only the **Box network allowlist**, **credential
@@ -39,7 +39,7 @@ binary itself is delivered via a locally-built image (see below), because kit
 
 > **Private preview.** The `linux-arm64/box-mount` binary is a Box private-preview
 > artifact and is **git-ignored** - it is not committed here. Obtain it from Box and
-> drop it at `agentmount/linux-arm64/box-mount` before building on Apple Silicon.
+> drop it at `box-mount/linux-arm64/box-mount` before building on Apple Silicon.
 
 ---
 
@@ -50,8 +50,8 @@ and the sbx runtime does **not** emulate other architectures.
 
 | Your host / sbx runtime  | Binary you need                        | Status |
 |--------------------------|----------------------------------------|--------|
-| `x86_64` (amd64)         | `agentmount/linux/agent-mount`         | works  |
-| `aarch64` (Apple Silicon)| `agentmount/linux-arm64/box-mount` (v0.4.0) | ✅ works - verified end-to-end |
+| `x86_64` (amd64)         | `box-mount/linux/box-mount`         | works  |
+| `aarch64` (Apple Silicon)| `box-mount/linux-arm64/box-mount` (v0.4.0) | ✅ works - verified end-to-end |
 
 Check your runtime arch:
 
@@ -60,19 +60,19 @@ sbx exec <any-sandbox> -- uname -m        # x86_64  or  aarch64
 ```
 
 `build-and-load.sh` auto-selects the binary matching your host arch (arm64 → the
-v0.4.0 `linux-arm64/box-mount`, amd64 → `linux/agent-mount`). Override with `BIN=…`
+v0.4.0 `linux-arm64/box-mount`, amd64 → `linux/box-mount`). Override with `BIN=…`
 if you have a different build.
 
 ---
 
 ## Quick start (local-only)
 
-### 1. Obtain the Box binary and recreate the `agentmount/` structure
+### 1. Obtain the Box binary and recreate the `box-mount/` structure
 
 This public repo ships **scaffolding only** - the Box binaries are private-preview
 artifacts and are **not** committed (they are git-ignored). A fresh clone therefore
-has no `agentmount/` directory, and `build-and-load.sh` will fail with
-`ERROR: binary not found: agentmount/linux-arm64/box-mount` until you drop the
+has no `box-mount/` directory, and `build-and-load.sh` will fail with
+`ERROR: binary not found: box-mount/linux-arm64/box-mount` until you drop the
 binary in.
 
 Get the build from Box (e.g. the `box-mount-0.4.0-linux-<arch>.tar.gz` archives),
@@ -80,28 +80,28 @@ then recreate the layout the build expects **from the repo root**:
 
 ```console
 # Apple Silicon (aarch64 sbx runtime) - REQUIRED to build here
-mkdir -p agentmount/linux-arm64
-tar xzf /path/to/box-mount-0.4.0-linux-aarch64.tar.gz -C agentmount/linux-arm64
-chmod +x agentmount/linux-arm64/box-mount
-file agentmount/linux-arm64/box-mount     # sanity: should say  ELF ... ARM aarch64
+mkdir -p box-mount/linux-arm64
+tar xzf /path/to/box-mount-0.4.0-linux-aarch64.tar.gz -C box-mount/linux-arm64
+chmod +x box-mount/linux-arm64/box-mount
+file box-mount/linux-arm64/box-mount     # sanity: should say  ELF ... ARM aarch64
 
 # amd64 runtime (Windows / Intel) - only if building for x86_64
-mkdir -p agentmount/linux
+mkdir -p box-mount/linux
 tar xzf /path/to/box-mount-0.4.0-linux-x86_64.tar.gz -C /tmp
-mv /tmp/box-mount agentmount/linux/agent-mount
+mv /tmp/box-mount box-mount/linux/box-mount
 ```
 
 Target layout (all paths are git-ignored, so nothing here gets committed):
 
 ```
-agentmount/
+box-mount/
 ├── linux-arm64/box-mount    # arm64 sbx runtime (Apple Silicon)
-├── linux/agent-mount        # amd64 sbx runtime (Windows / Intel)
-└── mac/agent-mount          # host-side use only (not the sandbox)
+├── linux/box-mount        # amd64 sbx runtime (Windows / Intel)
+└── mac/box-mount          # host-side use only (not the sandbox)
 ```
 
 `build-and-load.sh` auto-selects the binary matching your host arch, so on Apple
-Silicon only `agentmount/linux-arm64/box-mount` is required.
+Silicon only `box-mount/linux-arm64/box-mount` is required.
 
 ### 2. Build the image and load it into the sbx runtime
 
@@ -109,7 +109,7 @@ Silicon only `agentmount/linux-arm64/box-mount` is required.
 ./scripts/build-and-load.sh
 ```
 
-This builds `sbx-box-agentmount:local` (FROM the stock shell template, with the
+This builds `sbx-box:local` (FROM the stock shell template, with the
 `box-mount` binary baked in under both `box-mount` and `agent-mount`) and loads it
 into sbx's image store via `sbx template load`. Nothing is pushed. The script warns
 if the binary arch won't match your runtime.
@@ -124,16 +124,16 @@ if the binary arch won't match your runtime.
 To share the image instead of loading it only into your local sbx runtime, push a
 **multi-arch** image to Docker Hub. Pass the namespace you own as the first
 argument (e.g. `box`) — the script has no hard-coded default. It publishes to
-`<namespace>/sbx-box-agentmount`. Because both Linux binaries live under
-`agentmount/`, the script bakes the right one per platform (arm64 →
-`linux-arm64/box-mount`, amd64 → `linux/agent-mount`) and stitches them into a
+`<namespace>/sbx-box`. Because both Linux binaries live under
+`box-mount/`, the script bakes the right one per platform (arm64 →
+`linux-arm64/box-mount`, amd64 → `linux/box-mount`) and stitches them into a
 single `:v0.4.0` + `:latest` manifest, so consumers pull the binary matching their
 runtime automatically.
 
 ```console
 export DOCKERHUB_USERNAME=<your-hub-user>
 export DOCKERHUB_TOKEN=<your-docker-hub-access-token>   # a Hub access token, NOT your password
-./scripts/push-to-dockerhub.sh box                     # -> box/sbx-box-agentmount
+./scripts/push-to-dockerhub.sh box                     # -> box/sbx-box
 ```
 
 Overrides: `NAMESPACE=box …` instead of the positional arg, `VERSION=v0.4.1 …` to
@@ -141,7 +141,7 @@ change the tag, `PLATFORMS=linux/arm64 …` for a single-arch push. If
 `DOCKERHUB_TOKEN` is unset the script assumes an existing `docker login` session.
 Requires `docker buildx` (it creates a `sbx-box-builder` builder if needed).
 
-> ⚠️ **The `agentmount/` binaries are Box-confidential.** Only push to a Docker Hub
+> ⚠️ **The `box-mount/` binaries are Box-confidential.** Only push to a Docker Hub
 > repo you intend to be **private** (or one you are cleared to publish). A public
 > image would expose the private binary.
 
@@ -166,10 +166,10 @@ sbx secret ls            # confirm a 'box' service secret exists
 ### 4. Run the sandbox with the template + this kit
 
 ```console
-sbx run shell --template sbx-box-agentmount:local --kit ./ .
+sbx run shell --template sbx-box:local --kit ./ .
 ```
 
-### 5. Use AgentMount inside the sandbox
+### 5. Use Box Mount inside the sandbox
 
 ```console
 box-mount --version
@@ -186,14 +186,14 @@ box-mount unmount "/home/agent/workspace/box"
 
 ```console
 # binary present and runs (matches runtime arch)
-sbx run shell --template sbx-box-agentmount:local --kit ./ -- box-mount --version
+sbx run shell --template sbx-box:local --kit ./ -- box-mount --version
 
 # the env var holds the sentinel, NOT the real token (proxy swaps it on outbound)
-sbx run shell --template sbx-box-agentmount:local --kit ./ -- printenv BOX_ACCESS_TOKEN
+sbx run shell --template sbx-box:local --kit ./ -- printenv BOX_ACCESS_TOKEN
 # -> proxy-managed
 
 # credential injection works: a Box API call from inside the sandbox returns 200
-sbx run shell --template sbx-box-agentmount:local --kit ./ -- \
+sbx run shell --template sbx-box:local --kit ./ -- \
   curl -s -o /dev/null -w '%{http_code}\n' https://api.box.com/2.0/users/me
 # -> 200
 ```
@@ -212,7 +212,7 @@ echo hi > /home/agent/workspace/box/e2e.txt        # then check box.com / the Bo
 
 ## Evaluating on Windows (amd64)
 
-The `linux/agent-mount` binary is **linux/amd64**. On an amd64 sbx runtime
+The `linux/box-mount` binary is **linux/amd64**. On an amd64 sbx runtime
 (a Windows machine - Docker Desktop's VM is `x86_64` on amd64 hardware, WSL 2 **or**
 Hyper-V backend) it execs fine. You don't need bash/WSL - the underlying steps are
 three `docker`/`sbx` commands that run in native **PowerShell**:
@@ -220,11 +220,11 @@ three `docker`/`sbx` commands that run in native **PowerShell**:
 ```console
 # from the repo root (PowerShell) - replaces build-and-load.sh, no bash needed
 docker version                  # FIRST: confirm the Docker daemon is running (Server section present)
-docker build --platform linux/amd64 --build-arg BIN=agentmount/linux/agent-mount -t sbx-box-agentmount:local .
-docker save sbx-box-agentmount:local -o sbx-box.tar
+docker build --platform linux/amd64 --build-arg BIN=box-mount/linux/box-mount -t sbx-box:local .
+docker save sbx-box:local -o sbx-box.tar
 sbx template load sbx-box.tar
 
-sbx template ls                 # confirm sbx-box-agentmount:local is now in sbx's store
+sbx template ls                 # confirm sbx-box:local is now in sbx's store
 # (if it's not listed, --template will try to PULL it and fail with a 500 - see Troubleshooting)
 
 # Box token - interactive paste (avoids PowerShell pipe encoding mangling the token)
@@ -253,7 +253,7 @@ the wire.
 
 **Do not** run `box-mount config` inside the sandbox. (Note: a
 `~/.box-mount/box-config.json` would **not** override the env token - per the
-AgentMount docs, *environment variables take precedence over file values*, and the
+Box Mount docs, *environment variables take precedence over file values*, and the
 proxy overwrites the header regardless.) The reason to avoid `config` is different:
 it runs an interactive OAuth/JWT handshake and can write `client_id` /
 `client_secret` / `refresh_token` or `auth_type=jwt`, flipping the client out of
@@ -281,7 +281,7 @@ setup.
   `*.boxcdn.net` is in `permissions.network.allow` in `spec.yaml`; if a new CDN host
   appears, widen it. Find blocked hosts with `sbx policy log <sandbox-name>`.
 
-- **`500 ... pull failed for image 'sbx-box-agentmount:local'`** - the template image
+- **`500 ... pull failed for image 'sbx-box:local'`** - the template image
   isn't in sbx's store, so `--template` fell back to pulling it from a registry (it's
   local-only - there's nothing to pull). The build/save/load didn't complete, usually
   because **Docker wasn't running** during `docker build`. Confirm with `docker
@@ -316,14 +316,14 @@ setup.
   `*.boxcloud.com` credential inject, but if you see a redirect host in `sbx policy
   log` that isn't getting a Bearer header, add it to the `credentials.inject` block.
 
-- **Lost Box version history on save** - AgentMount doesn't support atomic-save
+- **Lost Box version history on save** - Box Mount doesn't support atomic-save
   (temp-file + rename); edit files in place inside the mount.
 
 ---
 
 ## Host-side binaries (not part of the sandbox)
 
-The `agentmount/mac/agent-mount` (darwin/arm64) and Windows builds run AgentMount
+The `box-mount/mac/box-mount` (darwin/arm64) and Windows builds run Box Mount
 **on your host machine**, not inside the sandbox, and are **not** used by the kit.
 Like the Linux binaries they are Box private-preview artifacts - obtain them from
 Box; they are git-ignored, not shipped in this repo. Only a **Linux** binary
