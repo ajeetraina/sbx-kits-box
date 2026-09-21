@@ -241,6 +241,15 @@ sbx secret set box
 
 ## Running in Docker Cloud (`sbx --cloud`)
 
+> **Recommended: use local mode for Box.** The kit's security guarantee — the real Box
+> token never enters the container — relies on the proxy injecting a *stored* credential.
+> In cloud today there is **no** way to store the Box token for injection: the cloud
+> secret store rejects custom services (`sbx --cloud secret set box` → `unknown service
+> "box"`) and `sbx secret set-custom` is **not yet supported in `--cloud`**. The only
+> cloud option passes the token into the sandbox as an env var, which forfeits that
+> guarantee. Use local mode until sbx supports custom kit credentials in cloud; the
+> steps below are for evaluation.
+
 With `sbx --cloud` the sandbox runs **server-side in Docker's cloud** (Linux microVMs),
 not on your machine. This is the ideal setup when you develop on a Mac but want Box
 Mount and the sandbox running in Linux in the cloud: your Mac only drives the CLI.
@@ -285,13 +294,16 @@ sbx --cloud exec <sandbox> -- box-mount mount /home/agent/workspace/box <box-fol
 > don't share the template with accounts you aren't cleared for.
 
 Notes:
-- **Box token (cloud limitation).** The cloud secret store accepts only built-in
-  services (`anthropic, aws, cursor, droid, github, google, groq, mistral, nebius,
-  openai, xai`), so `sbx --cloud secret set box` fails with `unknown service "box"` —
-  the kit's proxy-injected `box` credential works locally but isn't available in cloud
-  yet. Workaround: pass the token with `-e BOX_ACCESS_TOKEN=<token>` at run time, which
-  puts the real token **inside** the sandbox (no proxy indirection). Prefer a
-  short-lived developer token and `sbx --cloud rm` the sandbox when finished.
+- **Box token (cloud limitation).** Two ways to inject a credential exist, and neither
+  works for a custom `box` service in cloud yet: the cloud secret store accepts only
+  built-in services (`anthropic, aws, cursor, droid, github, google, groq, mistral,
+  nebius, openai, xai`) so `sbx --cloud secret set box` fails with `unknown service
+  "box"`, and `sbx secret set-custom` (the placeholder/proxy mechanism built for
+  non-built-in services — the proper fix, and it works locally) returns `not yet
+  supported in --cloud mode`. Until one of those lands in cloud, the only option is to
+  pass the token with `-e BOX_ACCESS_TOKEN=<token>` at run time, which puts the real
+  token **inside** the sandbox (no proxy indirection). Prefer a short-lived developer
+  token and `sbx --cloud rm` the sandbox when finished.
 - **Resources.** `--cpus` is one of 1/2/4/8/16 and `--memory-mib` is 512–32768 at a
   2:1 / 1:1 / 1:2 memory-to-CPU ratio; `--cpus 2 --memory-mib 4096` is a safe default.
   A cloud `run` without overrides defaults to 2 CPUs / 4 GiB (well above the 1 GiB a
