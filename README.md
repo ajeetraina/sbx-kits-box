@@ -247,8 +247,9 @@ sbx secret set box
 > secret store rejects custom services (`sbx --cloud secret set box` → `unknown service
 > "box"`) and `sbx secret set-custom` is **not yet supported in `--cloud`**. The only
 > cloud option passes the token into the sandbox as an env var, which forfeits that
-> guarantee. Use local mode until sbx supports custom kit credentials in cloud; the
-> steps below are for evaluation.
+> guarantee. Use local mode until sbx supports custom kit credentials in cloud
+> (tracking: [docker/sandboxes#6415](https://github.com/docker/sandboxes/issues/6415));
+> the steps below are for evaluation.
 
 With `sbx --cloud` the sandbox runs **server-side in Docker's cloud** (Linux microVMs),
 not on your machine. This is the ideal setup when you develop on a Mac but want Box
