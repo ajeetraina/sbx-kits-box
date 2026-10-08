@@ -1,0 +1,128 @@
+# syntax=docker/sandbox-kit:3
+# yaml-language-server: $schema=https://raw.githubusercontent.com/docker/sandbox-kit-spec/main/schema/kit.schema.json
+#
+# Box Mount (two-way folder sync) as a Kit v3 mixin — the same declarations as
+# the v2 ../../spec.yaml, expressed as typed capabilities.
+#
+# MIGRATION NOTE (v2 → v3): the v2 kit was a mixin that carried NO content. The
+# private box-mount client (~20–34 MB) could not ship in a v2 mixin (kit file
+# injection has a 4 MB limit), so it was baked into a SEPARATE prebuilt image
+# (../../Dockerfile → `sbx-box:local`), loaded with `sbx template load`, and
+# this mixin composed onto that custom image. v3 lifts that limitation: a mixin
+# may carry its own overlay, so the binary now ships IN this kit (see
+# box-mount.dockerfile) and the mixin composes onto ANY workload — no prebuilt
+# image, no `sbx template load`. That is the whole point of the migration.
+schemaVersion: "3"
+kind: mixin
+displayName: Box Mount (two-way folder sync)
+description: >-
+  Mounts a Box folder into the sandbox and keeps it in two-way sync via Box's
+  box-mount client. Layer it onto a shell or agent workload; the box-mount CLI
+  (with an agent-mount alias) is then on PATH. OAuth / developer-token auth: set
+  the token with `sbx secret set box`. The kit holds no credentials.
+sourceUrl: https://github.com/ajeetraina/sbx-kits-box
+licenses: [Apache-2.0]
+
+# MIGRATION NOTE: the v2 kit set no `version`. This kit's version genuinely IS
+# its content's — it ships the box-mount v0.4.0 client — so `version:` states a
+# fact rather than borrowing a number. Publishing is the only place its absence
+# shows, and by then the artifact is already in a registry.
+version: "0.4.0"
+
+# MIGRATION NOTE: no `provides`. A pinned provide is a claim about content that
+# the build must enforce (re-read the installed version and fail on mismatch).
+# The box-mount binary is a private preview artifact baked from the build
+# context — the overlay is `FROM scratch`, so the build cannot execute it to
+# assert its version — and nothing in this repo requires `box-mount`, so
+# offering the provide would buy nothing and assert a version the build cannot
+# check. The honest answer is to offer nothing matchable.
+
+# MIGRATION NOTE: no `requires`. v2 could only express `requires: {agent: X}`
+# and declared none. The box-mount client is a self-contained binary that needs
+# only the platform floor (§12: bash, sh, curl, git, a CA store, the agent user
+# at uid 1000) plus the glibc every Debian-based workload carries — nothing
+# beyond the floor to name. Declaring an *unprovidable* name would make the kit
+# refuse to compose everywhere, so silence is correct here.
+
+capabilities:
+  # v2 permissions.network.allow → network-policy@1 (host-only rules, so @1, not
+  # @2). v3 is phase-scoped: install hooks and the running agent get separate
+  # allow-lists, and an absent phase grants nothing.
+  #
+  # MIGRATION NOTE: there is no `install:` phase. In v2 the binary rode in a
+  # prebuilt image; here it is baked into the overlay at BUILD time, so nothing
+  # is fetched at create — every Box host is reached by the box-mount client at
+  # RUNTIME, and the install-phase grant the v2 flat list implied disappears.
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      # Box API surface the box-mount client talks to. Start with the core hosts
+      # and widen using `sbx policy log <sandbox>` if a request gets blocked.
+      # Note: sbx `*` matches a SINGLE label only, so the nested realtime
+      # endpoints (e.g. 2.realtime.services.box.net) need their own
+      # *.realtime.services.box.net entry.
+      runtime:
+        allow:
+          - api.box.com          # REST API + OAuth token endpoint
+          - upload.box.com       # file uploads
+          - dl.boxcloud.com      # file downloads
+          - "*.boxcloud.com"     # download redirects (public/dl shards)
+          - "*.services.box.net" # realtime events long-poll (two-way sync)
+          - "*.realtime.services.box.net" # realtime event endpoints, e.g. 2.realtime.services.box.net (Box->local sync)
+          - "*.boxcdn.net"       # sync-engine min-version manifest (cdn07.boxcdn.net/AgentMount.json)
+
+  # v2 credentials[] → credential@1, one per service. The real Box token never
+  # enters the container: box-mount sends the sentinel `Authorization: Bearer
+  # proxy-managed`, and the sbx proxy swaps in the real token from
+  # `sbx secret set box` on outbound requests to the Box hosts below.
+  - type: com.docker.sandbox/credential@1
+    # MIGRATION NOTE: v2 credentials default to not-required; v3 entries are
+    # required unless they opt out. `optional: true` preserves v2 behavior —
+    # the sandbox still starts without a token (box-mount just can't sync). Note
+    # `optional` and `description` are entry-level (siblings of `config`), not
+    # inside it.
+    optional: true
+    description: "Box OAuth / developer access token, injected as the Bearer credential on Box API requests."
+    config:
+      service: box
+      # phase is REQUIRED in v3. runtime — the credential exists so the
+      # box-mount client can authenticate at steady state, not for an install
+      # hook.
+      phase: runtime
+      apiKey:
+        name: BOX_ACCESS_TOKEN
+        # proxyManaged keeps the real token on the host: the in-container
+        # BOX_ACCESS_TOKEN carries only a sentinel, and the proxy swaps in the
+        # real token from `sbx secret set box` on the outbound rewrites below.
+        # This is what v2 did implicitly; without it a bound, named key would
+        # place the REAL secret in the container env.
+        proxyManaged: true
+        # Every inject domain must appear in the SAME phase's allow list (an
+        # exact host match). All three literal hosts are in runtime.allow above.
+        inject:
+          - domain: api.box.com
+            header: Authorization
+            format: "Bearer %s"
+          - domain: upload.box.com
+            header: Authorization
+            format: "Bearer %s"
+          - domain: dl.boxcloud.com
+            header: Authorization
+            format: "Bearer %s"
+
+  # v2 environment.variables → ENV in the recipe (see box-mount.dockerfile). A
+  # mixin carries static env through ENV on its recipe's final stage, which
+  # merges into the composed image; the descriptor has no field for static env.
+  # The BOX_ACCESS_TOKEN sentinel "proxy-managed" lives there.
+
+  # v2 agentInstructions.content → agent-context@1. The body moved verbatim into
+  # box-mount-context.md. No `filename:` here — that is workload-only (the
+  # workload owns the agent profile); a mixin carries `contentFile` alone. The
+  # body interpolates no args, so a staged contentFile (not inline content) is
+  # correct.
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      contentFile: ./box-mount-context.md
+
+  # MIGRATION NOTE: no lifecycle@1. The v2 kit had no install hooks or init
+  # files — its only content (the binary) was baked by the separate Dockerfile,
+  # which is now the overlay recipe. Nothing is written at create time.
