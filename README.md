@@ -12,30 +12,7 @@ The real Box token stays on the host. `box-mount` sends a sentinel
 and enforces the Box network allowlist, and the mounted folder stays in two-way
 sync with the Box folder — so the credential never enters the sandbox.
 
-```mermaid
-flowchart LR
-    subgraph host["Your machine (host)"]
-        secret[("sbx secret store<br/>box = REAL token")]
-        proxy{{"sbx proxy<br/>injects real token +<br/>enforces network policy"}}
-    end
-
-    subgraph vm["Sandbox microVM (no real token inside)"]
-        agent["Agent / shell"]
-        bm["box-mount client<br/>BOX_ACCESS_TOKEN = proxy-managed"]
-        mnt[/"/home/agent/workspace/box"/]
-        agent --> bm
-        bm <-->|two-way sync| mnt
-    end
-
-    subgraph boxcloud["Box"]
-        api["api.box.com · upload.box.com<br/>dl.boxcloud.com · *.services.box.net"]
-    end
-
-    bm -->|"Authorization: Bearer proxy-managed"| proxy
-    secret -.->|real token, never enters VM| proxy
-    proxy -->|"Authorization: Bearer &lt;real token&gt;"| api
-    api <-->|sync files| mnt
-```
+![Box Mount kit architecture: box-mount sends a proxy-managed sentinel, the sbx proxy swaps in the real Box token from the host secret store and enforces the network allowlist, and the mounted folder two-way-syncs with Box — the real token never enters the sandbox](images/architecture.png)
 
 ## What's in here
 
@@ -386,23 +363,7 @@ is one OCI image that composes directly onto any v3 shell/agent workload.
 | Config | `permissions`, `credentials`, `environment`, `agentInstructions` | `capabilities[]`: `network-policy@1`, `credential@1`, `agent-context@1` |
 | Run | `sbx run shell --template sbx-box:local --kit ./ .` | `sbx run docker/sbx-kit-shell:1.0.0 --kit ./v3/box-mount .` |
 
-```mermaid
-flowchart TB
-    subgraph v2["v2 — binary via a separate prebuilt image"]
-        direction LR
-        df2["Dockerfile<br/>bakes box-mount"] --> img2[("sbx-box:local<br/>(sbx template load)")]
-        spec2["spec.yaml<br/>(mixin: policy + creds + context)"] --> compose2{{compose}}
-        img2 --> compose2
-        compose2 --> sbox2["sandbox"]
-    end
-
-    subgraph v3["v3 — one OCI image, binary baked into the overlay"]
-        direction LR
-        kit3["box-mount.yaml + box-mount.dockerfile<br/>(mixin overlay bakes box-mount)"] --> compose3{{compose}}
-        wl3["any v3 workload<br/>docker/sbx-kit-shell"] --> compose3
-        compose3 --> sbox3["sandbox"]
-    end
-```
+![v2 vs v3 binary delivery: v2 bakes box-mount into a separate prebuilt sbx-box:local image loaded via sbx template load, then composes the spec.yaml mixin onto it; v3 bakes the binary into the mixin overlay itself, so one OCI image composes onto any v3 workload](images/v2-vs-v3.png)
 
 The credential/network/sync flow in [Architecture](#architecture) is identical
 for both — only binary delivery changes.
