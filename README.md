@@ -14,13 +14,24 @@ sbx-kits-box/
 ├── Dockerfile                      # bakes box-mount into an image, arch-agnostic via TARGETARCH (too big for files/)
 ├── scripts/build-and-load.sh       # build a multi-arch image (both arches you staged) + load it into the sbx runtime
 ├── scripts/push-to-dockerhub.sh    # build + push a multi-arch image to a Docker Hub namespace you pass in (e.g. box)
+├── scripts/push-kits-v3.sh         # build + push the v3 kit (ONE OCI image; binary is baked into the overlay)
 ├── box-mount/                       # (contents below are PRIVATE - git-ignored, obtain from Box)
 │   ├── README.md                   # upstream Box Mount CLI docs (Box Confidential)
 │   ├── linux/amd64/box-mount       # linux/amd64 binary  -> amd64 sandbox (Intel / Windows)
 │   ├── linux/arm64/box-mount       # linux/arm64 binary  -> arm64 sandbox (Apple Silicon)
 │   └── mac/box-mount               # darwin/arm64 binary -> HOST use only (not the sandbox)
+├── v3/box-mount/                    # the SAME kit as a Kit v3 mixin (see "Kit v3" below)
+│   ├── box-mount.yaml              # v3 descriptor (capabilities: network-policy, credential, agent-context)
+│   ├── box-mount.dockerfile        # overlay recipe that BAKES the binary (no separate prebuilt image)
+│   ├── box-mount-context.md        # agent instructions
+│   └── bin/linux/<arch>/box-mount  # PRIVATE binary, git-ignored, staged inside the kit's own build context
 └── README.md
 ```
+
+> **Two schema versions, both supported.** The root `spec.yaml` is the **v2**
+> kit; `v3/box-mount/` is the **v3** migration of the same kit. A v3 mixin only
+> composes onto **v3** workloads and the v2 mixin only onto **v2** agents, so
+> both stay published. See [Kit v3](#kit-v3-self-contained-mixin) below.
 
 > **The `box-mount/` binaries and docs are NOT in this repo.** They are Box
 > private-preview artifacts and are **git-ignored**. Obtain them from Box and drop
@@ -326,6 +337,64 @@ Notes:
 > The `--cloud` surface is evolving and some flags are experimental. If flags differ on
 > your `sbx` version, check `sbx --cloud <verb> --help` and the official docs:
 > https://docs.docker.com/ai/sandboxes/
+
+---
+
+## Kit v3 (self-contained mixin)
+
+`v3/box-mount/` is the same kit migrated to the **Kit v3** schema. The big
+difference is that a **v3 mixin carries its own content**: the private
+`box-mount` binary is baked into the mixin's overlay (`box-mount.dockerfile`),
+so there is **no separate prebuilt image and no `sbx template load`** — the kit
+is one OCI image that composes directly onto any v3 shell/agent workload.
+
+| | v2 (`spec.yaml` + `Dockerfile`) | v3 (`v3/box-mount/`) |
+|---|---|---|
+| Kit is | a spec + a separately-built `sbx-box:local` image | one OCI image (binary baked into the overlay) |
+| Deliver binary | `build-and-load.sh` → `sbx template load` | baked at build; nothing to load |
+| Config | `permissions`, `credentials`, `environment`, `agentInstructions` | `capabilities[]`: `network-policy@1`, `credential@1`, `agent-context@1` |
+| Run | `sbx run shell --template sbx-box:local --kit ./ .` | `sbx run docker/sbx-kit-shell:1.0.0 --kit ./v3/box-mount .` |
+
+### Build, run, verify
+
+Stage the private binaries **inside the kit's own build context** first (a kit
+cannot reach a sibling tree), then run it — no registry needed for the source
+form:
+
+```console
+# stage (git-ignored) — same binaries as the v2 box-mount/ tree
+mkdir -p v3/box-mount/bin/linux/arm64 v3/box-mount/bin/linux/amd64
+cp box-mount/linux/arm64/box-mount v3/box-mount/bin/linux/arm64/box-mount   # Apple Silicon
+cp box-mount/linux/amd64/box-mount v3/box-mount/bin/linux/amd64/box-mount   # Intel / Windows
+
+echo "<your-box-developer-or-oauth-access-token>" | sbx secret set box
+
+# compose the mixin onto a v3 shell workload (source form — builds on demand)
+sbx run docker/sbx-kit-shell:1.0.0 --kit ./v3/box-mount .
+#   inside: box-mount --version   (agent-mount is an alias)
+```
+
+Validate / build / conformance-check the artifact:
+
+```console
+docker buildx build v3/box-mount -f v3/box-mount/box-mount.yaml --output type=cacheonly   # fast descriptor validate
+PUSH=0 ./scripts/push-kits-v3.sh <namespace>                                              # build → OCI layout
+kit-tck validate --layout /tmp/sbx-kit-box-mount-layout 0.4.0                             # conformance (✓ conforms)
+```
+
+### Publish
+
+One artifact — the recipe bakes the binary and the frontend attaches the
+descriptor, so there is no second image to push:
+
+```console
+# ⚠️ the v3 image EMBEDS the private binary — push only to a PRIVATE repo
+I_KNOW_THIS_IS_PRIVATE=1 ./scripts/push-kits-v3.sh <namespace>   # → <ns>/sbx-kit-box-mount :latest + :0.4.0
+sbx run docker/sbx-kit-shell:1.0.0 --kit docker.io/<namespace>/sbx-kit-box-mount:0.4.0 .
+```
+
+Auth, the Box network allowlist, and the troubleshooting notes below apply to
+both schema versions.
 
 ---
 
