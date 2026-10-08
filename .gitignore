@@ -1,9 +1,17 @@
 # Box Mount binaries + upstream docs are PRIVATE / CONFIDENTIAL (Box preview).
-# Obtain them from Box and drop them into box-mount/<arch>/ locally before
-# building. They must NEVER be committed to this public repo.
-box-mount/linux/box-mount
-box-mount/linux-arm64/
-box-mount/mac/box-mount
+# Obtain them from Box and stage them locally before building. They must NEVER
+# be committed to this public repo, so every staging location is ignored.
+#
+# v2 (root Dockerfile) stages them here (leading slash anchors to repo root, so
+# this does NOT match the v3/box-mount/ kit directory):
+#   box-mount/linux/amd64/box-mount, box-mount/linux/arm64/box-mount
+/box-mount/
+#
+# v3 mixin (v3/box-mount/box-mount.dockerfile) stages them inside the kit's own
+# build context (a kit cannot reach a sibling's tree):
+#   v3/box-mount/bin/linux/amd64/box-mount, v3/box-mount/bin/linux/arm64/box-mount
+v3/box-mount/bin/
 
-# Upstream Box Mount CLI doc, marked "Box Confidential" — keep local only.
-box-mount/README.md
+# Old pre-rename "AgentMount" preview binaries — same PRIVATE / CONFIDENTIAL
+# class as the box-mount client. Never commit them to this public repo.
+/agentmount/

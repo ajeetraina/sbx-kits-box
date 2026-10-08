@@ -11,16 +11,27 @@ enters the container).
 ```
 sbx-kits-box/
 ├── spec.yaml                       # the kit (v2 mixin): Box network policy + token injection + agent instructions
-├── Dockerfile                      # bakes the box-mount binary into a local image (binary is too big for files/)
-├── scripts/build-and-load.sh       # build that image + load it into the sbx runtime (auto-selects the arch binary)
+├── Dockerfile                      # bakes box-mount into an image, arch-agnostic via TARGETARCH (too big for files/)
+├── scripts/build-and-load.sh       # build a multi-arch image (both arches you staged) + load it into the sbx runtime
 ├── scripts/push-to-dockerhub.sh    # build + push a multi-arch image to a Docker Hub namespace you pass in (e.g. box)
-├── box-mount/                     # (contents below are PRIVATE - git-ignored, obtain from Box)
+├── scripts/push-kits-v3.sh         # build + push the v3 kit (ONE OCI image; binary is baked into the overlay)
+├── box-mount/                       # (contents below are PRIVATE - git-ignored, obtain from Box)
 │   ├── README.md                   # upstream Box Mount CLI docs (Box Confidential)
-│   ├── linux/box-mount           # linux/amd64 binary (v0.x)   -> amd64 sandbox
-│   ├── linux-arm64/box-mount       # linux/arm64 binary (v0.4.0) -> Apple Silicon sandbox
-│   └── mac/box-mount             # darwin/arm64 binary         -> HOST use only (not the sandbox)
+│   ├── linux/amd64/box-mount       # linux/amd64 binary  -> amd64 sandbox (Intel / Windows)
+│   ├── linux/arm64/box-mount       # linux/arm64 binary  -> arm64 sandbox (Apple Silicon)
+│   └── mac/box-mount               # darwin/arm64 binary -> HOST use only (not the sandbox)
+├── v3/box-mount/                    # the SAME kit as a Kit v3 mixin (see "Kit v3" below)
+│   ├── box-mount.yaml              # v3 descriptor (capabilities: network-policy, credential, agent-context)
+│   ├── box-mount.dockerfile        # overlay recipe that BAKES the binary (no separate prebuilt image)
+│   ├── box-mount-context.md        # agent instructions
+│   └── bin/linux/<arch>/box-mount  # PRIVATE binary, git-ignored, staged inside the kit's own build context
 └── README.md
 ```
+
+> **Two schema versions, both supported.** The root `spec.yaml` is the **v2**
+> kit; `v3/box-mount/` is the **v3** migration of the same kit. A v3 mixin only
+> composes onto **v3** workloads and the v2 mixin only onto **v2** agents, so
+> both stay published. See [Kit v3](#kit-v3-self-contained-mixin) below.
 
 > **The `box-mount/` binaries and docs are NOT in this repo.** They are Box
 > private-preview artifacts and are **git-ignored**. Obtain them from Box and drop
@@ -37,31 +48,31 @@ binary itself is delivered via a locally-built image (see below), because kit
 > engine). The Dockerfile installs the binary as **both** `box-mount` (required) and
 > `agent-mount` (back-compat alias), so either command works inside the sandbox.
 
-> **Private preview.** The `linux-arm64/box-mount` binary is a Box private-preview
-> artifact and is **git-ignored** - it is not committed here. Obtain it from Box and
-> drop it at `box-mount/linux-arm64/box-mount` before building on Apple Silicon.
+> **Private preview.** The `box-mount` binaries are Box private-preview artifacts and
+> are **git-ignored** - not committed here. Obtain them from Box and stage them at
+> `box-mount/linux/amd64/box-mount` and/or `box-mount/linux/arm64/box-mount` before
+> building. Box ships both amd64 and arm64 Linux builds.
 
 ---
 
-## ⚠️ Architecture requirement (read first)
+## Architecture (works for both amd64 and arm64)
 
-A sandbox can only run a binary that **matches the sbx runtime's architecture**,
-and the sbx runtime does **not** emulate other architectures.
+A sandbox can only run an image that **matches the sbx runtime's architecture** — the
+runtime does **not** emulate. This kit builds for **both** arches so the same tooling
+works on Apple Silicon and Intel/amd64 alike:
 
-| Your host / sbx runtime  | Binary you need                        | Status |
-|--------------------------|----------------------------------------|--------|
-| `x86_64` (amd64)         | `box-mount/linux/box-mount`         | works  |
-| `aarch64` (Apple Silicon)| `box-mount/linux-arm64/box-mount` (v0.4.0) | ✅ works - verified end-to-end |
+| Your host / sbx runtime  | Binary you stage                | Status |
+|--------------------------|---------------------------------|--------|
+| `x86_64` (amd64)         | `box-mount/linux/amd64/box-mount` | ✅ works |
+| `aarch64` (Apple Silicon)| `box-mount/linux/arm64/box-mount` | ✅ works |
 
-Check your runtime arch:
+`build-and-load.sh` builds **every arch you have staged** into one multi-arch image
+via `docker buildx` (the `TARGETARCH`-aware Dockerfile bakes the right binary into
+each). The loaded template — and the saved OCI tar — run on **both** arches, so you
+can build once and reuse the artifact anywhere. Stage only your own arch and you get
+a single-arch image for this host; that still works, it just won't run elsewhere.
 
-```console
-sbx exec <any-sandbox> -- uname -m        # x86_64  or  aarch64
-```
-
-`build-and-load.sh` auto-selects the binary matching your host arch (arm64 → the
-v0.4.0 `linux-arm64/box-mount`, amd64 → `linux/box-mount`). Override with `BIN=…`
-if you have a different build.
+Check a runtime's arch: `sbx exec <any-sandbox> -- uname -m`  (`x86_64` or `aarch64`).
 
 ---
 
@@ -72,36 +83,37 @@ if you have a different build.
 This public repo ships **scaffolding only** - the Box binaries are private-preview
 artifacts and are **not** committed (they are git-ignored). A fresh clone therefore
 has no `box-mount/` directory, and `build-and-load.sh` will fail with
-`ERROR: binary not found: box-mount/linux-arm64/box-mount` until you drop the
-binary in.
+`ERROR: no box-mount binary staged` until you stage at least your host's arch.
 
-Get the build from Box (e.g. the `box-mount-0.4.0-linux-<arch>.tar.gz` archives),
-then recreate the layout the build expects **from the repo root**:
+Get the build from Box (the `box-mount-0.4.0-linux-<arch>.tar.gz` archives), then
+stage the binaries under the arch-keyed layout **from the repo root**. Stage **both**
+to build a multi-arch image; stage just your own arch for a single-arch build:
 
 ```console
-# Apple Silicon (aarch64 sbx runtime) - REQUIRED to build here
-mkdir -p box-mount/linux-arm64
-tar xzf /path/to/box-mount-0.4.0-linux-aarch64.tar.gz -C box-mount/linux-arm64
-chmod +x box-mount/linux-arm64/box-mount
-file box-mount/linux-arm64/box-mount     # sanity: should say  ELF ... ARM aarch64
+# arm64 (Apple Silicon)
+mkdir -p box-mount/linux/arm64
+tar xzf /path/to/box-mount-0.4.0-linux-aarch64.tar.gz -C box-mount/linux/arm64
+chmod +x box-mount/linux/arm64/box-mount
+file box-mount/linux/arm64/box-mount     # sanity: should say  ELF ... ARM aarch64
 
-# amd64 runtime (Windows / Intel) - only if building for x86_64
-mkdir -p box-mount/linux
-tar xzf /path/to/box-mount-0.4.0-linux-x86_64.tar.gz -C /tmp
-mv /tmp/box-mount box-mount/linux/box-mount
+# amd64 (Intel / Windows)
+mkdir -p box-mount/linux/amd64
+tar xzf /path/to/box-mount-0.4.0-linux-x86_64.tar.gz -C box-mount/linux/amd64
+chmod +x box-mount/linux/amd64/box-mount
+file box-mount/linux/amd64/box-mount     # sanity: should say  ELF ... x86-64
 ```
 
 Target layout (all paths are git-ignored, so nothing here gets committed):
 
 ```
 box-mount/
-├── linux-arm64/box-mount    # arm64 sbx runtime (Apple Silicon)
-├── linux/box-mount        # amd64 sbx runtime (Windows / Intel)
-└── mac/box-mount          # host-side use only (not the sandbox)
+├── linux/amd64/box-mount    # amd64 sbx runtime (Intel / Windows)
+├── linux/arm64/box-mount    # arm64 sbx runtime (Apple Silicon)
+└── mac/box-mount            # host-side use only (not the sandbox)
 ```
 
-`build-and-load.sh` auto-selects the binary matching your host arch, so on Apple
-Silicon only `box-mount/linux-arm64/box-mount` is required.
+The arch directory names are the Docker `TARGETARCH` values (`amd64`, `arm64`), which
+is how the Dockerfile picks the right binary per platform.
 
 ### 2. Build the image and load it into the sbx runtime
 
@@ -109,10 +121,10 @@ Silicon only `box-mount/linux-arm64/box-mount` is required.
 ./scripts/build-and-load.sh
 ```
 
-This builds `sbx-box:local` (FROM the stock shell template, with the
-`box-mount` binary baked in under both `box-mount` and `agent-mount`) and loads it
-into sbx's image store via `sbx template load`. Nothing is pushed. The script warns
-if the binary arch won't match your runtime.
+This builds `sbx-box:local` (FROM the stock shell template, with `box-mount` baked in
+under both `box-mount` and `agent-mount`) for **every arch you staged**, and loads the
+multi-arch result into sbx's image store via `sbx template load`. Nothing is pushed.
+Uses `docker buildx`; the script warns if your host's arch isn't among those staged.
 
 > **Docker must be running** before this step. If the daemon is down the build
 > fails silently, the image is never loaded, and `sbx run --template …` later fails
@@ -124,11 +136,10 @@ if the binary arch won't match your runtime.
 To share the image instead of loading it only into your local sbx runtime, push a
 **multi-arch** image to Docker Hub. Pass the namespace you own as the first
 argument (e.g. `box`) — the script has no hard-coded default. It publishes to
-`<namespace>/sbx-box`. Because both Linux binaries live under
-`box-mount/`, the script bakes the right one per platform (arm64 →
-`linux-arm64/box-mount`, amd64 → `linux/box-mount`) and stitches them into a
-single `:v0.4.0` + `:latest` manifest, so consumers pull the binary matching their
-runtime automatically.
+`<namespace>/sbx-box`. One `docker buildx` build covers every staged arch (the
+`TARGETARCH` Dockerfile bakes the right binary per platform) and pushes a single
+`:v0.4.0` + `:latest` multi-arch manifest, so consumers pull the binary matching
+their runtime automatically.
 
 ```console
 export DOCKERHUB_USERNAME=<your-hub-user>
@@ -212,15 +223,16 @@ echo hi > /home/agent/workspace/box/e2e.txt        # then check box.com / the Bo
 
 ## Evaluating on Windows (amd64)
 
-The `linux/box-mount` binary is **linux/amd64**. On an amd64 sbx runtime
-(a Windows machine - Docker Desktop's VM is `x86_64` on amd64 hardware, WSL 2 **or**
-Hyper-V backend) it execs fine. You don't need bash/WSL - the underlying steps are
-three `docker`/`sbx` commands that run in native **PowerShell**:
+The `box-mount/linux/amd64/box-mount` binary is **linux/amd64**. On an amd64 sbx
+runtime (a Windows machine - Docker Desktop's VM is `x86_64` on amd64 hardware, WSL 2
+**or** Hyper-V backend) it execs fine. You don't need bash/WSL - the underlying steps
+are three `docker`/`sbx` commands that run in native **PowerShell** (`--platform` sets
+`TARGETARCH`, so the Dockerfile picks the amd64 binary automatically - no `BIN` arg):
 
 ```console
 # from the repo root (PowerShell) - replaces build-and-load.sh, no bash needed
 docker version                  # FIRST: confirm the Docker daemon is running (Server section present)
-docker build --platform linux/amd64 --build-arg BIN=box-mount/linux/box-mount -t sbx-box:local .
+docker build --platform linux/amd64 -t sbx-box:local .
 docker save sbx-box:local -o sbx-box.tar
 sbx template load sbx-box.tar
 
@@ -235,6 +247,154 @@ sbx secret set box
 > (`docker build --platform linux/amd64 …` then `docker save`) - the build only
 > *copies* the binary, never execs it, so cross-building works. Copy `sbx-box.tar`
 > to Windows and just run `sbx template load sbx-box.tar` there.
+
+---
+
+## Running in Docker Cloud (`sbx --cloud`)
+
+> **Recommended: use local mode for Box.** The kit's security guarantee — the real Box
+> token never enters the container — relies on the proxy injecting a *stored* credential.
+> In cloud today there is **no** way to store the Box token for injection: the cloud
+> secret store rejects custom services (`sbx --cloud secret set box` → `unknown service
+> "box"`) and `sbx secret set-custom` is **not yet supported in `--cloud`**. The only
+> cloud option passes the token into the sandbox as an env var, which forfeits that
+> guarantee. Use local mode until sbx supports custom kit credentials in cloud
+> (tracking: [docker/sandboxes#6415](https://github.com/docker/sandboxes/issues/6415));
+> the steps below are for evaluation.
+
+With `sbx --cloud` the sandbox runs **server-side in Docker's cloud** (Linux microVMs),
+not on your machine. This is the ideal setup when you develop on a Mac but want Box
+Mount and the sandbox running in Linux in the cloud: your Mac only drives the CLI.
+Docker Cloud runs **amd64**, and this kit builds an amd64 image from the same source as
+your local arm64 build — so you develop on Apple Silicon and run amd64 in the cloud
+without a separate cross-build.
+
+Two differences from local runs: a custom template must be **uploaded to the cloud
+registry first** (`--template` never auto-uploads, and it must be a **docker-save** tar,
+not a buildx OCI tar), and — see the **Box token** note below — the kit's proxy-injected
+`box` credential is **not yet accepted by the cloud secret store**, so the token is
+passed as an env var into the cloud sandbox instead.
+
+```console
+# 0. Sign in (a Docker account with Cloud Sandboxes access)
+sbx login
+
+# 1. Build an amd64 image and export a DOCKER-SAVE tar. Docker Cloud runs amd64, and
+#    `sbx template load --cloud` needs docker-save format (manifest.json) — a buildx
+#    OCI tar (index.json) is rejected with "file manifest.json not found in tar".
+docker build --platform linux/amd64 -t sbx-box:cloud .
+docker save sbx-box:cloud -o /tmp/sbx-box.tar
+
+# 2. Upload it as a cloud-managed template (~600 MB; takes a few minutes)
+sbx template load /tmp/sbx-box.tar sbx-box --cloud --cpus 2 --memory-mib 4096
+
+# 3. Run the sandbox in the cloud with this kit (amd64 Linux).
+#    The cloud secret store rejects the kit's custom `box` service
+#    (`sbx --cloud secret set box` -> unknown service "box"), so pass the token as an
+#    env var. NOTE: unlike the local proxy path, the real token then lives INSIDE the
+#    sandbox — use a short-lived developer token and delete the sandbox when done.
+sbx --cloud run shell --template sbx-box --kit ./ -e BOX_ACCESS_TOKEN=<your-box-token>
+
+# 5. Use Box Mount inside the cloud sandbox
+sbx --cloud ls                                                    # find the sandbox name
+sbx --cloud exec <sandbox> -- box-mount --version
+sbx --cloud exec <sandbox> -- box-mount mount /home/agent/workspace/box <box-folder-id>
+```
+
+> ⚠️ **Confidential upload.** The tar carries the private `box-mount` binary. It goes
+> to **your own** Docker Cloud account's template registry - treat it as private and
+> don't share the template with accounts you aren't cleared for.
+
+Notes:
+- **Box token (cloud limitation).** Two ways to inject a credential exist, and neither
+  works for a custom `box` service in cloud yet: the cloud secret store accepts only
+  built-in services (`anthropic, aws, cursor, droid, github, google, groq, mistral,
+  nebius, openai, xai`) so `sbx --cloud secret set box` fails with `unknown service
+  "box"`, and `sbx secret set-custom` (the placeholder/proxy mechanism built for
+  non-built-in services — the proper fix, and it works locally) returns `not yet
+  supported in --cloud mode`. Until one of those lands in cloud, the only option is to
+  pass the token with `-e BOX_ACCESS_TOKEN=<token>` at run time, which puts the real
+  token **inside** the sandbox (no proxy indirection). Prefer a short-lived developer
+  token and `sbx --cloud rm` the sandbox when finished.
+- **Resources.** `--cpus` is one of 1/2/4/8/16 and `--memory-mib` is 512–32768 at a
+  2:1 / 1:1 / 1:2 memory-to-CPU ratio; `--cpus 2 --memory-mib 4096` is a safe default.
+  A cloud `run` without overrides defaults to 2 CPUs / 4 GiB (well above the 1 GiB a
+  constrained local run can fall back to).
+- **Tar format.** `sbx template load --cloud` parses **docker-save** archives
+  (`manifest.json`). A buildx OCI export (`--output type=oci`, `index.json`) is
+  rejected — use `docker build` + `docker save` as above. The amd64 template is
+  single-platform, so no `--platform` flag is needed at run time.
+- **Network egress.** The kit's Box allowlist (`spec.yaml`) travels with `--kit`. If a
+  Box host is still blocked in the cloud, find it with `sbx --cloud policy log
+  <sandbox>` and allow it (`--allow-network` at create time, or a policy allow).
+- **Workspace.** Cloud sandboxes don't bind-mount your Mac's local folders like local
+  mode does - Box Mount syncs Box content straight into the sandbox, so you usually
+  don't need a local workspace there. To bring in a git repo add `--clone`; to copy
+  files use `sbx cp`.
+- **Lifecycle.** `--ttl 2h` sets a time-to-live, `sbx attach <sandbox>` reconnects, and
+  `sbx move` shuttles a sandbox between local and cloud.
+
+> The `--cloud` surface is evolving and some flags are experimental. If flags differ on
+> your `sbx` version, check `sbx --cloud <verb> --help` and the official docs:
+> https://docs.docker.com/ai/sandboxes/
+
+---
+
+## Kit v3 (self-contained mixin)
+
+`v3/box-mount/` is the same kit migrated to the **Kit v3** schema. The big
+difference is that a **v3 mixin carries its own content**: the private
+`box-mount` binary is baked into the mixin's overlay (`box-mount.dockerfile`),
+so there is **no separate prebuilt image and no `sbx template load`** — the kit
+is one OCI image that composes directly onto any v3 shell/agent workload.
+
+| | v2 (`spec.yaml` + `Dockerfile`) | v3 (`v3/box-mount/`) |
+|---|---|---|
+| Kit is | a spec + a separately-built `sbx-box:local` image | one OCI image (binary baked into the overlay) |
+| Deliver binary | `build-and-load.sh` → `sbx template load` | baked at build; nothing to load |
+| Config | `permissions`, `credentials`, `environment`, `agentInstructions` | `capabilities[]`: `network-policy@1`, `credential@1`, `agent-context@1` |
+| Run | `sbx run shell --template sbx-box:local --kit ./ .` | `sbx run docker/sbx-kit-shell:1.0.0 --kit ./v3/box-mount .` |
+
+### Build, run, verify
+
+Stage the private binaries **inside the kit's own build context** first (a kit
+cannot reach a sibling tree), then run it — no registry needed for the source
+form:
+
+```console
+# stage (git-ignored) — same binaries as the v2 box-mount/ tree
+mkdir -p v3/box-mount/bin/linux/arm64 v3/box-mount/bin/linux/amd64
+cp box-mount/linux/arm64/box-mount v3/box-mount/bin/linux/arm64/box-mount   # Apple Silicon
+cp box-mount/linux/amd64/box-mount v3/box-mount/bin/linux/amd64/box-mount   # Intel / Windows
+
+echo "<your-box-developer-or-oauth-access-token>" | sbx secret set box
+
+# compose the mixin onto a v3 shell workload (source form — builds on demand)
+sbx run docker/sbx-kit-shell:1.0.0 --kit ./v3/box-mount .
+#   inside: box-mount --version   (agent-mount is an alias)
+```
+
+Validate / build / conformance-check the artifact:
+
+```console
+docker buildx build v3/box-mount -f v3/box-mount/box-mount.yaml --output type=cacheonly   # fast descriptor validate
+PUSH=0 ./scripts/push-kits-v3.sh <namespace>                                              # build → OCI layout
+kit-tck validate --layout /tmp/sbx-kit-box-mount-layout 0.4.0                             # conformance (✓ conforms)
+```
+
+### Publish
+
+One artifact — the recipe bakes the binary and the frontend attaches the
+descriptor, so there is no second image to push:
+
+```console
+# ⚠️ the v3 image EMBEDS the private binary — push only to a PRIVATE repo
+I_KNOW_THIS_IS_PRIVATE=1 ./scripts/push-kits-v3.sh <namespace>   # → <ns>/sbx-kit-box-mount :latest + :0.4.0
+sbx run docker/sbx-kit-shell:1.0.0 --kit docker.io/<namespace>/sbx-kit-box-mount:0.4.0 .
+```
+
+Auth, the Box network allowlist, and the troubleshooting notes below apply to
+both schema versions.
 
 ---
 
@@ -301,6 +461,24 @@ setup.
 
 - **`box-mount: not found` / exec format error** - architecture mismatch; see the
   Architecture section above. Confirm with `sbx exec <sandbox> -- uname -m`.
+
+- **`failed to create sandbox: failed to run sandbox container`** - the loaded image
+  has no variant for this host's arch (e.g. an arm64-only image on an amd64 host). The
+  sbx runtime does **not** emulate. Confirm the mismatch:
+  ```console
+  uname -m                                                        # host arch, e.g. x86_64
+  docker image inspect sbx-box:local --format '{{.Architecture}}' # image arch
+  ```
+  Fix: stage the host's arch and rebuild. `build-and-load.sh` builds a multi-arch
+  image from every arch you staged, so staging **both** produces one image that runs
+  on either host:
+  ```console
+  mkdir -p box-mount/linux/amd64
+  # stage the amd64 box-mount at box-mount/linux/amd64/box-mount (obtain from Box)
+  file box-mount/linux/amd64/box-mount       # sanity: should say  ELF ... x86-64
+  ./scripts/build-and-load.sh                # builds every staged arch into one image
+  sbx run shell --name box --template sbx-box:local --kit ./ .
+  ```
 
 - **`401 Unauthorized` from Box** - the token is invalid/expired. Developer tokens
   last ~60 min and cannot be refreshed under this kit (there's no refresh token, and

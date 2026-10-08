@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Build the Box Mount image and push it to Docker Hub.
+# Build the Box Mount image and push it to Docker Hub as a MULTI-ARCH image.
 #
-# Unlike scripts/build-and-load.sh (which loads a single-arch image into the local
-# sbx runtime and pushes nothing), this script publishes a MULTI-ARCH image to
-# Docker Hub so users on either Apple Silicon (arm64) or Intel/amd64 pull the
-# binary that matches their sbx runtime automatically.
+# Unlike scripts/build-and-load.sh (which loads the image into the local sbx
+# runtime and pushes nothing), this publishes a multi-arch manifest to Docker Hub
+# so users on either Apple Silicon (arm64) or Intel/amd64 pull the binary matching
+# their sbx runtime automatically.
 #
-# The private box-mount binaries live under box-mount/<arch>/ and are baked in
-# per platform (arm64 -> box-mount/linux-arm64/box-mount, amd64 ->
-# box-mount/linux/box-mount). Only the platforms whose binary is present get
-# built; missing ones are skipped with a warning.
+# The private box-mount binaries are baked in per platform via the TARGETARCH-aware
+# Dockerfile. Stage them (git-ignored, obtain from Box) at:
+#   box-mount/linux/amd64/box-mount   (linux/amd64)
+#   box-mount/linux/arm64/box-mount   (linux/arm64)
+# Only the platforms whose binary is present get built; missing ones are skipped.
 #
 # Auth: pass Docker Hub creds via env for non-interactive login, e.g.
 #   export DOCKERHUB_USERNAME=<your-hub-user>
@@ -39,6 +40,7 @@ IMAGE_NAME="${IMAGE_NAME:-sbx-box}"
 REPO="${REPO:-${NAMESPACE}/${IMAGE_NAME}}"
 VERSION="${VERSION:-v0.4.0}"
 BASE="${BASE:-docker/sandbox-templates:shell-docker}"
+BUILDER="${BUILDER:-sbx-box-builder}"
 # Space-separated list of platforms to publish. Only those with a matching binary
 # on disk are actually built.
 PLATFORMS="${PLATFORMS:-linux/arm64 linux/amd64}"
@@ -46,11 +48,11 @@ PLATFORMS="${PLATFORMS:-linux/arm64 linux/amd64}"
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
-# Map a docker platform -> the private binary that must be baked in for it.
+# Map a docker platform -> the private binary that must be staged for it.
 bin_for_platform() {
   case "$1" in
-    linux/arm64) echo "box-mount/linux-arm64/box-mount" ;;
-    linux/amd64) echo "box-mount/linux/box-mount" ;;
+    linux/amd64) echo "box-mount/linux/amd64/box-mount" ;;
+    linux/arm64) echo "box-mount/linux/arm64/box-mount" ;;
     *) echo "" ;;
   esac
 }
@@ -62,6 +64,22 @@ docker buildx version >/dev/null 2>&1 || {
   exit 1
 }
 
+# Keep only platforms whose binary is actually staged.
+build_platforms=()
+for plat in $PLATFORMS; do
+  bin="$(bin_for_platform "$plat")"
+  if [ -z "$bin" ]; then
+    echo "!! WARNING: no binary mapping for platform '$plat'; skipping" >&2
+    continue
+  fi
+  if [ ! -f "$bin" ]; then
+    echo "!! WARNING: binary for $plat not staged ($bin); skipping this platform" >&2
+    continue
+  fi
+  build_platforms+=("$plat")
+done
+[ "${#build_platforms[@]}" -gt 0 ] || { echo "ERROR: no platforms staged; nothing to push." >&2; exit 1; }
+
 # Non-interactive login if creds were provided; otherwise trust an existing session.
 if [ -n "${DOCKERHUB_TOKEN:-}" ]; then
   echo ">> logging in to Docker Hub as ${DOCKERHUB_USERNAME:-$NAMESPACE}"
@@ -71,50 +89,28 @@ else
 fi
 
 # Ensure a buildx builder that can drive multi-platform builds exists.
-if ! docker buildx inspect sbx-box-builder >/dev/null 2>&1; then
-  echo ">> creating buildx builder 'sbx-box-builder'"
-  docker buildx create --name sbx-box-builder --driver docker-container >/dev/null
+if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
+  echo ">> creating buildx builder '$BUILDER'"
+  docker buildx create --name "$BUILDER" --driver docker-container >/dev/null
 fi
-docker buildx use sbx-box-builder
 
-# Build + push each available platform to an arch-suffixed tag, collecting the
-# per-arch refs so we can stitch them into one multi-arch manifest at the end.
-arch_tags=()
-for plat in $PLATFORMS; do
-  bin="$(bin_for_platform "$plat")"
-  if [ -z "$bin" ]; then
-    echo "!! WARNING: no binary mapping for platform '$plat'; skipping" >&2
-    continue
-  fi
-  if [ ! -f "$bin" ]; then
-    echo "!! WARNING: binary for $plat not found ($bin); skipping this platform" >&2
-    continue
-  fi
-  arch="${plat#linux/}"
-  tag="${REPO}:${VERSION}-${arch}"
-  echo ">> building + pushing $tag  (binary: $bin)"
-  docker buildx build \
-    --platform "$plat" \
-    --build-arg BASE="$BASE" \
-    --build-arg BIN="$bin" \
-    -t "$tag" \
-    --push .
-  arch_tags+=("$tag")
-done
-
-[ "${#arch_tags[@]}" -gt 0 ] || { echo "ERROR: no platforms built; nothing pushed." >&2; exit 1; }
-
-# Combine the per-arch images into version + latest manifest lists.
-echo ">> creating multi-arch manifest ${REPO}:${VERSION} (+ :latest)"
-docker buildx imagetools create -t "${REPO}:${VERSION}" -t "${REPO}:latest" "${arch_tags[@]}"
+plat_csv="$(IFS=,; echo "${build_platforms[*]}")"
+echo ">> building + pushing $REPO ($plat_csv) as :$VERSION and :latest"
+# One multi-arch build+push; the TARGETARCH Dockerfile bakes the right binary per arch.
+docker buildx --builder "$BUILDER" build \
+  --platform "$plat_csv" \
+  --provenance=false \
+  --build-arg BASE="$BASE" \
+  -t "${REPO}:${VERSION}" \
+  -t "${REPO}:latest" \
+  --push .
 
 echo ">> done. Published:"
 echo "     ${REPO}:${VERSION}"
 echo "     ${REPO}:latest"
-for t in "${arch_tags[@]}"; do echo "     $t"; done
 cat <<EOF
 
-Pull + run from Docker Hub:
+Pull + run from Docker Hub (any arch — the manifest selects the match):
   docker pull ${REPO}:${VERSION}
   docker save ${REPO}:${VERSION} -o /tmp/sbx-box.tar && sbx template load /tmp/sbx-box.tar
   sbx run shell --template ${REPO}:${VERSION} --kit ./ .
