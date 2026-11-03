@@ -1,4 +1,4 @@
-# sbx-kits-box - Box Mount kit (private / local-only)
+# sbx-kits-box - Box Mount kit (private)
 
 An [sbx](https://docs.docker.com/ai/sandboxes/) kit that brings Box's **Box Mount**
 client into a sandbox: mount a Box folder into the sandbox and keep it in two-way
@@ -260,15 +260,12 @@ sbx secret set box
 
 ## Running in Docker Cloud (`sbx --cloud`)
 
-> **Recommended: use local mode for Box.** The kit's security guarantee — the real Box
-> token never enters the container — relies on the proxy injecting a *stored* credential.
-> In cloud today there is **no** way to store the Box token for injection: the cloud
-> secret store rejects custom services (`sbx --cloud secret set box` → `unknown service
-> "box"`) and `sbx secret set-custom` is **not yet supported in `--cloud`**. The only
-> cloud option passes the token into the sandbox as an env var, which forfeits that
-> guarantee. Use local mode until sbx supports custom kit credentials in cloud
-> (tracking: [docker/sandboxes#6415](https://github.com/docker/sandboxes/issues/6415));
-> the steps below are for evaluation.
+> **Status: works end-to-end as of sbx v0.50.1** — including the kit's security
+> guarantee (the real Box token stays on the host). This reverses the earlier
+> "local only" guidance: `sbx secret set-custom` now works in `--cloud`, so the
+> token is injected by the proxy rather than passed into the sandbox. Earlier sbx
+> releases (≤ v0.43) lacked this and forced an `-e BOX_ACCESS_TOKEN` fallback —
+> see [docker/sandboxes#6415](https://github.com/docker/sandboxes/issues/6415).
 
 With `sbx --cloud` the sandbox runs **server-side in Docker's cloud** (Linux microVMs),
 not on your machine. This is the ideal setup when you develop on a Mac but want Box
@@ -277,11 +274,14 @@ Docker Cloud runs **amd64**, and this kit builds an amd64 image from the same so
 your local arm64 build — so you develop on Apple Silicon and run amd64 in the cloud
 without a separate cross-build.
 
-Two differences from local runs: a custom template must be **uploaded to the cloud
-registry first** (`--template` never auto-uploads, and it must be a **docker-save** tar,
-not a buildx OCI tar), and — see the **Box token** note below — the kit's proxy-injected
-`box` credential is **not yet accepted by the cloud secret store**, so the token is
-passed as an env var into the cloud sandbox instead.
+Three things differ from local runs, and each has bitten someone:
+1. A custom template must be **uploaded to the cloud registry first** (`--template`
+   never auto-uploads, and it must be a **docker-save** tar, not a buildx OCI tar).
+2. The cloud launch uses the **prebuilt template** (`-t sbx-box`), **not** `--kit`.
+   The v3 `--kit` mixin compose path **fails in cloud** (see the note below).
+3. Cloud enforces its **own** network policy — the kit's `network-policy@1` allowlist
+   does **not** travel to cloud. The cloud default is **`deny-all`**, so you must
+   allow the Box hosts explicitly (or rely on an account-level allow-all policy).
 
 ```console
 # 0. Sign in (a Docker account with Cloud Sandboxes access)
@@ -293,20 +293,28 @@ sbx login
 docker build --platform linux/amd64 -t sbx-box:cloud .
 docker save sbx-box:cloud -o /tmp/sbx-box.tar
 
-# 2. Upload it as a cloud-managed template (~600 MB; takes a few minutes)
+# 2. Upload it as a cloud-managed template (takes a few minutes)
 sbx template load /tmp/sbx-box.tar sbx-box --cloud --cpus 2 --memory-mib 4096
 
-# 3. Run the sandbox in the cloud with this kit (amd64 Linux).
-#    The cloud secret store rejects the kit's custom `box` service
-#    (`sbx --cloud secret set box` -> unknown service "box"), so pass the token as an
-#    env var. NOTE: unlike the local proxy path, the real token then lives INSIDE the
-#    sandbox — use a short-lived developer token and delete the sandbox when done.
-sbx --cloud run shell --template sbx-box --kit ./ -e BOX_ACCESS_TOKEN=<your-box-token>
+# 3. Store the Box token as a CUSTOM PROXY secret — the token stays on the host and
+#    the proxy sets the Authorization header on requests to the Box hosts (in cloud,
+#    --host takes exact DNS names only; the sandbox env var holds only a placeholder).
+sbx --cloud secret set-custom \
+  --host api.box.com --host upload.box.com --host dl.boxcloud.com \
+  --env BOX_ACCESS_TOKEN --value <your-box-token>
 
-# 5. Use Box Mount inside the cloud sandbox
-sbx --cloud ls                                                    # find the sandbox name
-sbx --cloud exec <sandbox> -- box-mount --version
-sbx --cloud exec <sandbox> -- box-mount mount /home/agent/workspace/box <box-folder-id>
+# 4. Create the sandbox NATIVELY in the cloud from the template, allowing the Box
+#    hosts (cloud default is deny-all; the kit's allowlist does NOT apply here).
+#    NOTE: `-t TEMPLATE` takes no agent name and cannot be combined with `--kit`.
+sbx --cloud create -t sbx-box --name box-cloud \
+  --allow-network api.box.com --allow-network upload.box.com --allow-network dl.boxcloud.com \
+  --allow-network '*.boxcloud.com' --allow-network '*.services.box.net' \
+  --allow-network '*.realtime.services.box.net' --allow-network '*.boxcdn.net'
+
+# 5. Use Box Mount inside the cloud sandbox. Prove egress FIRST, then mount a FOLDER id.
+sbx --cloud exec box-cloud -- getent hosts cdn07.boxcdn.net        # must return an IP
+sbx --cloud exec box-cloud -- box-mount --version
+sbx --cloud exec box-cloud -- box-mount mount /home/agent/workspace/box <box-folder-id>
 ```
 
 > ⚠️ **Confidential upload.** The tar carries the private `box-mount` binary. It goes
@@ -314,33 +322,63 @@ sbx --cloud exec <sandbox> -- box-mount mount /home/agent/workspace/box <box-fol
 > don't share the template with accounts you aren't cleared for.
 
 Notes:
-- **Box token (cloud limitation).** Two ways to inject a credential exist, and neither
-  works for a custom `box` service in cloud yet: the cloud secret store accepts only
-  built-in services (`anthropic, aws, cursor, droid, github, google, groq, mistral,
-  nebius, openai, xai`) so `sbx --cloud secret set box` fails with `unknown service
-  "box"`, and `sbx secret set-custom` (the placeholder/proxy mechanism built for
-  non-built-in services — the proper fix, and it works locally) returns `not yet
-  supported in --cloud mode`. Until one of those lands in cloud, the only option is to
-  pass the token with `-e BOX_ACCESS_TOKEN=<token>` at run time, which puts the real
-  token **inside** the sandbox (no proxy indirection). Prefer a short-lived developer
-  token and `sbx --cloud rm` the sandbox when finished.
-- **Resources.** `--cpus` is one of 1/2/4/8/16 and `--memory-mib` is 512–32768 at a
-  2:1 / 1:1 / 1:2 memory-to-CPU ratio; `--cpus 2 --memory-mib 4096` is a safe default.
-  A cloud `run` without overrides defaults to 2 CPUs / 4 GiB (well above the 1 GiB a
-  constrained local run can fall back to).
+- **Box token (proxy-injected, cloud).** `sbx --cloud secret set box` still fails
+  (`unknown service "box"` — the cloud secret store only accepts built-in services:
+  `anthropic, bedrock, copilot, cursor, devin, droid, github, google, groq, mistral,
+  nebius, openai, openrouter, xai`). The working path is **`sbx --cloud secret
+  set-custom`** (EXPERIMENTAL but functional on v0.50.1): it stores the real token on
+  the host, sets the sandbox env var to a placeholder, and has the proxy set
+  `Authorization: Bearer <token>` on requests to the `--host` hosts. In `--cloud`,
+  `--host` takes **exact DNS names only** (no wildcards) — the three Bearer hosts
+  (`api.box.com`, `upload.box.com`, `dl.boxcloud.com`) are exact, and download shards
+  use pre-signed URLs so they need no header. The real token never enters the sandbox.
+- **Don't `sbx move` a Box sandbox into the cloud — create it natively.** A sandbox
+  created locally and `sbx move`d to cloud keeps its **local deny-all policy** and does
+  **not** get cloud egress wiring or any account-level "always applied" allow policy.
+  The symptom: `sbx --cloud policy ls <sandbox>` shows your allow rules, yet DNS fails
+  for even an allowed host — `getent hosts api.box.com` returns nothing, and box-mount
+  dies at the version check with `Failed to resolve 'cdn07.boxcdn.net'`. Adding rules
+  to a moved sandbox doesn't help (its resolver is unwired). Fix: `sbx --cloud rm` it
+  and `sbx --cloud create -t sbx-box …` fresh.
+- **Network policy is account/sandbox-scoped in cloud, default `deny-all`.** The kit's
+  `network-policy@1` (from `spec.yaml` / the v3 descriptor) is a **local** construct and
+  does not apply to cloud sandboxes. Allow the Box hosts with `--allow-network` at
+  create (shown above), add them later with `sbx --cloud policy allow network [--sandbox
+  <id>] "host1,host2,…"` (applies live — no restart; wildcards OK here), or set an
+  account default via `sbx --cloud policy init allow-all|balanced|deny-all`. An
+  account-level **always-applied** policy (e.g. "Open / allow-all" in the web console)
+  attaches only to **natively-created** cloud sandboxes, not moved ones. The seven Box
+  hosts to allow: `api.box.com`, `upload.box.com`, `dl.boxcloud.com`, `*.boxcloud.com`,
+  `*.services.box.net`, `*.realtime.services.box.net`, `*.boxcdn.net` (the last — the
+  CDN serving `/AgentMount.json` — is the easy one to miss and is what box-mount hits
+  *first*, before any API call).
+- **v3 `--kit` compose fails in cloud.** `sbx --cloud create shell --kit ./v3/box-mount/`
+  builds the mixin overlay but then errors `an uploaded kit image is one kit's own, so
+  it cannot serve a launch of 1 more; the set has to be assembled into one image first`
+  — the cloud launcher can't assemble mixin + base at launch time. Use the prebuilt
+  `sbx-box` template instead (the v3 `--kit` flow works **locally**; see [Kit v3](#kit-v3-self-contained-mixin)).
+- **Mount a FOLDER id, not a file id.** `box-mount mount <dir> <ID>` needs a *folder*
+  id; a file id yields `404 folder not found`. Root / "All Files" = `0`. Tell them apart
+  with `sbx --cloud exec box-cloud -- curl -s https://api.box.com/2.0/folders/0` (the
+  proxy injects auth) and check each item's `"type"`.
+- **Triage by error layer.** A request that *reaches* Box and returns `404` proves the
+  network + proxy-auth both work (bad folder); a `401` means the token/secret isn't set;
+  a DNS `Failed to resolve …` / empty `getent` means the host isn't allowed (or the
+  sandbox was `move`d). `curl` surfaces a policy block as `403 CONNECT tunnel failed`,
+  box-mount's Python surfaces it as a DNS resolution error — same block, different text.
+- **Resources.** `--cpus` is one of 1/2/4/8/16 and memory must name a billable shape
+  (`--cpus 2 --memory 4g` is a safe default; a create without overrides is 2 CPU / 4 GiB).
+  `sbx template load --cloud` takes `--cpus`/`--memory-mib` (512–32768 at 2:1/1:1/1:2).
 - **Tar format.** `sbx template load --cloud` parses **docker-save** archives
   (`manifest.json`). A buildx OCI export (`--output type=oci`, `index.json`) is
   rejected — use `docker build` + `docker save` as above. The amd64 template is
   single-platform, so no `--platform` flag is needed at run time.
-- **Network egress.** The kit's Box allowlist (`spec.yaml`) travels with `--kit`. If a
-  Box host is still blocked in the cloud, find it with `sbx --cloud policy log
-  <sandbox>` and allow it (`--allow-network` at create time, or a policy allow).
 - **Workspace.** Cloud sandboxes don't bind-mount your Mac's local folders like local
   mode does - Box Mount syncs Box content straight into the sandbox, so you usually
   don't need a local workspace there. To bring in a git repo add `--clone`; to copy
   files use `sbx cp`.
-- **Lifecycle.** `--ttl 2h` sets a time-to-live, `sbx attach <sandbox>` reconnects, and
-  `sbx move` shuttles a sandbox between local and cloud.
+- **Lifecycle.** `--ttl 2h` sets a time-to-live, `sbx --cloud attach <sandbox>`
+  reconnects (starting it if stopped), and `sbx --cloud rm` deletes it.
 
 > The `--cloud` surface is evolving and some flags are experimental. If flags differ on
 > your `sbx` version, check `sbx --cloud <verb> --help` and the official docs:
@@ -448,11 +486,18 @@ setup.
   as `box-mount` (and `agent-mount`); rebuild if you see this. *(Found during arm64
   end-to-end bring-up.)*
 
-- **`Cannot determine minimum Box Mount version allowed, exiting` (HTTP 403 from
-  `cdn07.boxcdn.net/AgentMount.json`)** - the sync engine's startup version check
-  hit a host that wasn't allowlisted, and the proxy default-denied it (403). Fix:
-  `*.boxcdn.net` is in `permissions.network.allow` in `spec.yaml`; if a new CDN host
-  appears, widen it. Find blocked hosts with `sbx policy log <sandbox-name>`.
+- **`Cannot determine minimum Box Mount version allowed, exiting`** - the sync engine's
+  startup version check (`cdn07.boxcdn.net/AgentMount.json`) hit a host that wasn't
+  allowlisted; it fails *before* any Box API call, so this is the first thing to see.
+  - **Local** surfaces it as `HTTP 403` (proxy default-deny). Fix: `*.boxcdn.net` is in
+    `permissions.network.allow` in `spec.yaml`; widen if a new CDN host appears. Find
+    blocked hosts with `sbx policy log <sandbox-name>`.
+  - **Cloud** surfaces it as a DNS error (`Failed to resolve 'cdn07.boxcdn.net' …
+    Temporary failure in name resolution`) — the kit allowlist doesn't apply in cloud.
+    Allow `*.boxcdn.net` (and the other six Box hosts) via `--allow-network` at create
+    or `sbx --cloud policy allow network`. If even an *allowed* host won't resolve
+    (`getent hosts api.box.com` returns nothing), the sandbox was `sbx move`d — recreate
+    it natively. See [Running in Docker Cloud](#running-in-docker-cloud-sbx---cloud).
 
 - **`500 ... pull failed for image 'sbx-box:local'`** - the template image
   isn't in sbx's store, so `--template` fell back to pulling it from a registry (it's
